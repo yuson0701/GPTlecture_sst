@@ -17,7 +17,7 @@ export function createApp({ env = process.env, fetcher = fetch, transcriber = ne
       if (!/^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(host || '')) return json(res, 403, { error: 'Local access only.' });
       if (req.method === 'GET' && req.url === '/api/config') {
         let status; try { status = await transcriber.request('status'); } catch { status = { available: false }; }
-        return json(res, 200, { configured: status.available, reason: status.reason, model: `faster-whisper · ${env.WHISPER_MODEL || 'large-v3-turbo'}`, summary: env.SUMMARY_MODE === 'extractive' ? 'extractive' : 'ollama', local: true });
+        return json(res, 200, { configured: status.available, reason: status.reason, model: env.WHISPER_BACKEND === 'mlx' ? `MLX · Apple GPU · ${env.MLX_WHISPER_MODEL || 'whisper-turbo'}` : `faster-whisper · ${env.WHISPER_MODEL || 'large-v3-turbo'}`, summary: env.SUMMARY_MODE === 'extractive' ? 'extractive' : 'ollama', local: true });
       }
       if (['GET', 'HEAD'].includes(req.method) && files.has(req.url)) {
         const [file, mime] = files.get(req.url), content = await readFile(new URL(`./public/${file}`, import.meta.url));
@@ -33,13 +33,14 @@ export function createApp({ env = process.env, fetcher = fetch, transcriber = ne
       if (req.url === '/api/session' || req.url === '/api/transcribe') {
         if (typeof body.glossary !== 'string' || body.glossary.length > 1500) return json(res, 400, { error: '용어는 1,500자 이내로 입력해 주세요.' });
         if (req.url === '/api/transcribe') {
+          if (body.final !== undefined && typeof body.final !== 'boolean') return json(res, 400, { error: 'Invalid transcription mode' });
           if (typeof body.audio !== 'string' || body.audio.length > 640000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(body.audio) || body.audio.length % 4) return json(res, 400, { error: 'Invalid PCM audio' });
           const audio = Buffer.from(body.audio, 'base64');
           if (audio.length < 3200 || audio.length > 480000 || audio.length % 2) return json(res, 400, { error: 'Invalid PCM audio length' });
         }
         if (sttBusy) return json(res, 429, { error: '음성 처리 중입니다. 다른 강의 탭을 종료해 주세요.' });
         sttBusy = true;
-        try { const result = await transcriber.request(req.url === '/api/session' ? 'load' : 'transcribe', { audio: body.audio, glossary: body.glossary }); return json(res, 200, result); }
+        try { const result = await transcriber.request(req.url === '/api/session' ? 'load' : 'transcribe', { audio: body.audio, glossary: body.glossary, final: body.final !== false }); return json(res, 200, result); }
         catch (error) { return json(res, 503, { error: error.message }); }
         finally { sttBusy = false; }
       }

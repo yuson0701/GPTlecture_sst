@@ -10,27 +10,55 @@ export function pcmBase64(samples, sampleRate) {
   return btoa(binary);
 }
 
-// Prefer a short pause after 3 seconds; cap continuous speech at 10 seconds.
-// Overlap forced splits by 400 ms to reduce cut-off words.
+// Speech-gated rolling recognition. Silence never creates a transcript request.
 export class Segmenter {
-  constructor(sampleRate, onChunk) { this.rate = sampleRate; this.onChunk = onChunk; this.parts = []; this.length = 0; this.total = 0; this.silent = 0; this.overlap = false; this.newSamples = 0; }
-  push(samples) {
-    this.parts.push(samples); this.length += samples.length; this.total += samples.length; this.newSamples += samples.length;
-    const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
-    this.silent = rms < 0.008 ? this.silent + samples.length : 0;
-    if (this.length >= this.rate * 3 && this.silent >= this.rate * 0.7) this.emit(false);
-    else if (this.length >= this.rate * 10) this.emit(true);
+  constructor(sampleRate, onChunk, { threshold = 0.008, previewSeconds = 0.35, pauseSeconds = 0.5 } = {}) {
+    this.rate = sampleRate; this.onChunk = onChunk; this.threshold = threshold;
+    this.previewSamples = sampleRate * previewSeconds; this.pauseSamples = sampleRate * pauseSeconds;
+    this.parts = []; this.length = 0; this.total = 0; this.silent = 0; this.speech = 0;
+    this.preRoll = []; this.preLength = 0; this.active = false; this.serial = 0;
+    this.overlap = false; this.lastPreview = 0;
   }
-  emit(overlapNext) {
-    if (this.length < this.rate * 0.1 || !this.newSamples) return;
+  push(samples) {
+    this.total += samples.length;
+    const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+    const voiced = rms >= this.threshold;
+    if (!this.active) {
+      if (!voiced) {
+        this.preRoll.push(samples); this.preLength += samples.length;
+        while (this.preLength > this.rate * 0.2 && this.preRoll.length > 1) this.preLength -= this.preRoll.shift().length;
+        return;
+      }
+      this.active = true; this.id = `speech-${this.serial++}`;
+      this.parts = this.preRoll; this.length = this.preLength; this.preRoll = []; this.preLength = 0;
+      this.start = (this.total - samples.length - this.length) / this.rate;
+      this.speech = 0; this.silent = 0; this.lastPreview = 0;
+    }
+    this.parts.push(samples); this.length += samples.length;
+    if (voiced) { this.speech += samples.length; this.silent = 0; } else this.silent += samples.length;
+    if (this.silent >= this.pauseSamples) this.finish(false);
+    else if (this.length >= this.rate * 8) this.finish(true);
+    else if (voiced && this.speech >= this.rate * 0.16 && this.length - this.lastPreview >= this.previewSamples) {
+      this.emit(false); this.lastPreview = this.length;
+    }
+  }
+  samples() {
     const samples = new Float32Array(this.length); let offset = 0;
     for (const part of this.parts) { samples.set(part, offset); offset += part.length; }
-    const chunk = { audio: pcmBase64(samples, this.rate), seconds: (this.total - this.length) / this.rate, overlap: this.overlap };
-    const tail = overlapNext ? samples.slice(-Math.floor(this.rate * 0.4)) : new Float32Array();
-    this.parts = tail.length ? [tail] : []; this.length = tail.length; this.silent = 0; this.overlap = overlapNext; this.newSamples = 0;
-    this.onChunk(chunk);
+    return samples;
   }
-  flush() { this.emit(false); this.parts = []; this.length = 0; }
+  emit(final) {
+    this.onChunk({ id: this.id, audio: pcmBase64(this.samples(), this.rate), seconds: this.start, overlap: this.overlap, final });
+  }
+  finish(continueSpeech) {
+    if (!this.active) return;
+    // Reject short clicks; the model's neural VAD additionally checks speech.
+    if (this.speech >= this.rate * 0.16) this.emit(true);
+    const tail = continueSpeech ? this.samples().slice(-Math.floor(this.rate * 0.4)) : new Float32Array();
+    this.parts = []; this.length = 0; this.active = false; this.speech = 0; this.silent = 0;
+    this.preRoll = tail.length ? [tail] : []; this.preLength = tail.length; this.overlap = continueSpeech;
+  }
+  flush() { this.finish(false); this.preRoll = []; this.preLength = 0; }
 }
 
 export function removeOverlap(previous, current) {
@@ -45,16 +73,40 @@ export function removeOverlap(previous, current) {
   return current;
 }
 
-// One request at a time. Failed chunks remain first in line for an explicit retry.
+// Keep final audio reliable, but coalesce obsolete previews on slower hardware.
 export class AudioQueue {
-  constructor(process, onChange = () => {}, limit = 8) { this.process = process; this.onChange = onChange; this.limit = limit; this.items = []; this.running = false; this.failed = null; this.waiters = []; }
-  enqueue(item) { if (this.items.length >= this.limit) return false; this.items.push(item); this.onChange(); void this.pump(); return true; }
+  constructor(process, onChange = () => {}, limit = 8) { this.process = process; this.onChange = onChange; this.limit = limit; this.items = []; this.running = false; this.current = null; this.failed = null; this.waiters = []; }
+  enqueue(item) {
+    if (item.id !== undefined) {
+      // Never mutate an in-flight request. A final replaces queued previews.
+      const index = this.items.findIndex(x => x !== this.current && x.id === item.id);
+      if (index >= 0) {
+        if (this.items[index].final !== false && item.final === false) return true;
+        this.items.splice(index, 1);
+      }
+      // Preview requests are expendable; final requests are not.
+      if (item.final === false && this.items.some(x => x !== this.current && x.final !== false)) return true;
+      if (item.final !== false) this.items = this.items.filter(x => x === this.current || x.final !== false || x.id !== item.id);
+    }
+    if (this.items.length >= this.limit) {
+      const preview = this.items.findIndex(x => x !== this.current && x.final === false);
+      if (preview >= 0) this.items.splice(preview, 1);
+      else return item.final === false;
+    }
+    this.items.push(item); this.onChange(); void this.pump(); return true;
+  }
   async pump() {
     if (this.running || this.failed) return;
     this.running = true;
-    try { while (this.items.length) { await this.process(this.items[0]); this.items.shift(); this.onChange(); } }
-    catch (error) { this.failed = error; }
-    finally { this.running = false; this.onChange(); this.waiters.splice(0).forEach(resolve => resolve()); }
+    try {
+      while (this.items.length) {
+        this.current = this.items[0];
+        try { await this.process(this.current); }
+        catch (error) { if (this.current.final !== false) throw error; }
+        this.items.shift(); this.current = null; this.onChange();
+      }
+    } catch (error) { this.failed = error; }
+    finally { this.current = null; this.running = false; this.onChange(); this.waiters.splice(0).forEach(resolve => resolve()); }
   }
   async settle() { if (this.running) await new Promise(resolve => this.waiters.push(resolve)); }
   retry() { this.failed = null; return this.pump(); }

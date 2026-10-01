@@ -2,12 +2,45 @@
 
 A local lecture workspace inspired by Tiro: Korean speech recognition beside continually updated study notes. **No OpenAI API, paid cloud service, API key, or ChatGPT subscription is required.**
 
-- **Speech:** faster-whisper with multilingual Whisper `large-v3-turbo`, running on your computer.
+- **Speech:** local Whisper with live provisional text; faster-whisper for CPU/NVIDIA, or MLX for Apple Silicon GPU. No cloud speech API.
 - **AI summaries:** Ollama with local `qwen2.5:7b`, refreshed every 20 seconds when new transcript text is ready.
 - **Fallback:** if Ollama is unavailable, a deterministic algorithm selects key sentences from the transcript and prior notes. The UI and exports label this as sentence extraction, not AI explanation.
 - **Privacy:** the app sends audio only to its local Node/Python backend, and text only to local Ollama. Once models are downloaded, inference works offline. Notes and pending audio stay in tab memory; export before closing.
 
 Whisper is an open-weight model originally released by OpenAI; using its weights locally does **not** call the OpenAI API. ChatGPT Voice Mode is not used.
+
+## Update an existing installation
+
+Stop the app with Ctrl+C, then run in the project folder:
+
+```sh
+git pull --ff-only origin work
+npm start
+```
+
+Refresh the browser. Existing faster-whisper models and `.env` settings keep working. The update sends a provisional recognition request about every **350 ms of ongoing speech**, instead of waiting for a 3–10 second block. This is the request interval, **not a guaranteed display latency**: local model inference and any queued final audio add time. Gray text is provisional, updates in place, and may be corrected. A roughly 500 ms pause triggers final recognition; only finalized text enters summaries. Pure silence creates no requests or empty transcript rows.
+
+### MacBook Air / Apple Silicon: use the GPU
+
+The existing faster-whisper CPU backend cannot use Apple Metal. To enable the optional MLX GPU backend on an Apple Silicon Mac with native ARM Python:
+
+```sh
+.venv/bin/python -m pip install -r requirements-mac.txt
+.venv/bin/python scripts/download_model.py --backend mlx
+```
+
+Edit your existing `.env` and add or replace these settings (do not overwrite your other settings):
+
+```dotenv
+WHISPER_BACKEND=mlx
+MLX_WHISPER_MODEL=mlx-community/whisper-turbo
+```
+
+Then run `npm start` and refresh the page. The transcript panel should show **MLX · Apple GPU**. MLX uses a separate set of model weights, downloaded once; your existing faster-whisper weights are preserved. Change `WHISPER_BACKEND=faster-whisper` to switch back.
+
+MLX is expected to improve performance on Apple Silicon, but this change has not been benchmarked on your MacBook Air. Word-by-word timing and perfect recognition cannot be guaranteed. These are repeated partial Whisper decodes, not a native streaming speech model. The model can return several words at once or revise an earlier word; the UI displays actual recognition results immediately without a fake typing animation.
+
+If Ollama competes for GPU/memory, use the lighter Qwen 3B model below or set `SUMMARY_MODE=extractive` to prioritize transcription. Keep the browser tab awake and place the microphone near the lecturer.
 
 ## Setup on your computer
 
@@ -59,7 +92,7 @@ For a real lecture:
 
 1. Enter a lecture title and Korean/English course vocabulary.
 2. Click **강의 시작**. The model loads before microphone capture starts; allow microphone access when prompted.
-3. Transcription appears after approximately 3–10 seconds of audio **plus inference time**. New finalized text is summarized periodically.
+3. Provisional text appears while you speak and updates in the same line. Pause briefly to finalize it. No rows are added for silence. New finalized text is summarized periodically.
 4. Click **종료** to stop the microphone, process the remaining audio, and complete the final summary.
 5. Click **노트 내보내기** to download Markdown. Closing or refreshing the tab discards notes and pending audio.
 
@@ -75,16 +108,16 @@ Default: `large-v3-turbo`, CPU, `int8`. This prioritizes a capable multilingual 
 | `OLLAMA_MODEL=qwen2.5:3b` | Lighter local summaries than 7b |
 | `SUMMARY_MODE=extractive` | No language-model download or inference needed |
 
-After changing the speech model, download the matching weights first, e.g. `.venv/bin/python scripts/download_model.py --model small`, update `.env`, and restart. CPU `int8` is the portable starting point. faster-whisper does not use Apple Metal through this implementation. For GPU installation details, see the [faster-whisper requirements](https://github.com/SYSTRAN/faster-whisper#requirements).
+After changing the speech model, download the matching weights first, e.g. `.venv/bin/python scripts/download_model.py --model small`, update `.env`, and restart. CPU `int8` is the portable starting point. Choose the MLX backend above to use Apple Metal; faster-whisper itself does not use it. For GPU installation details, see the [faster-whisper requirements](https://github.com/SYSTRAN/faster-whisper#requirements).
 
 Whisper and Ollama running together compete for resources. A modern computer with 16 GB RAM is a reasonable starting point for the defaults, but actual requirements and throughput depend on hardware, context size and model quantization. If the queue grows, select smaller models or extraction mode.
 
 ## Implementation and failure behavior
 
 - AudioWorklet captures mono samples and outputs silence to avoid speaker feedback. Browser code resamples to 16 kHz signed PCM and sends it to the same-origin server.
-- Chunks end at a quiet interval after 3 seconds or at a 10-second cap. Forced splits overlap by 400 ms; matching boundary text is removed on a best-effort basis. This is **chunked near-real-time transcription**, not token-by-token streaming. Boundary errors can still occur.
-- A persistent Python worker keeps the faster-whisper model in memory. It uses Korean language hints, supplied terminology and VAD. Model loading uses `local_files_only=True`; lecture-time processing never silently downloads weights or falls back to a cloud service.
-- A serial browser queue keeps chunks ordered and limits backlog to eight chunks. If full, recording stops and unsaved audio is visibly marked as a missing segment. Processing errors retain the failed chunk and later chunks for **처리 재시도**. Audio is not persisted across refreshes; Markdown export includes a marker for unprocessed segments, not the audio itself.
+- An audio-level gate retains a 200 ms pre-roll, rejects short clicks, and sends no requests for silence. During speech it requests rolling previews about every 350 ms. A 500 ms pause finalizes the utterance; continuous speech is finalized at 8 seconds with 400 ms overlap. Matching boundary text is removed on a best-effort basis. Quiet speech below the gate can be missed and loud non-speech noise can pass it; backend speech detection provides an additional check. Boundary errors can still occur.
+- A persistent Python worker keeps the chosen model in memory, warmed before microphone capture starts. It uses Korean language hints, terminology, greedy decoding with no temperature retries, and speech detection. MLX uses local Silero VAD before decoding. Model paths are resolved with `local_files_only=True`; lecture-time processing never downloads weights or falls back to a cloud service.
+- A serial browser queue keeps final audio ordered and limits backlog to eight requests. Unprocessed previews of the same utterance are replaced by the newest preview or final recording. In-flight requests are never mutated, obsolete previews are skipped under load, and a failed preview cannot prevent the full final recording from being processed. If full, recording stops and unsaved audio is visibly marked as a missing segment. Processing errors retain the failed chunk and later chunks for **처리 재시도**. Audio is not persisted across refreshes; Markdown export includes a marker for unprocessed segments, not the audio itself.
 - Stop flushes the last partial chunk and waits for pending transcription and summary work. Slow inference can make stopping take time. Local recognition requests have a two-minute timeout; timed-out workers are terminated and can be retried.
 - Summary batches are bounded and combined with the prior summary. This is lossy: the full transcript remains the source of truth. Fallback extraction may select sentences from earlier generated notes as well as the new transcript; it does not create new explanations.
 - Loopback serving, same-origin checks, fixed local Ollama access, payload limits, and single-job admission protect this personal-use app. It is not a public multi-user deployment. There are no speech-provider session time limits, but long lectures remain limited by memory and processing speed.
@@ -107,8 +140,8 @@ npm test
 python3 -m unittest discover -s test -p '*_test.py'
 ```
 
-Validation completed: 14 Node tests and 3 Python tests pass. Chromium smoke checks covered the scripted demo, Markdown export, mobile layout, synthetic-microphone capture, final-chunk flushing, and retrying retained audio after a simulated model failure.
+Automated coverage includes speech gating, short-pause finalization, same-utterance previews, preview coalescing under load, final-audio retry, PCM encoding, local-only API routing, and both backend contracts. Browser checks use synthetic audio and mocked recognition responses to verify partial text, finalization and silence behavior.
 
-Automated tests cover local-only routing, PCM conversion and segmentation, bounded ordered queues, retry retention, offline worker configuration, Korean hints, and Ollama fallback. Model calls in these tests use fixtures; they do not measure live transcription accuracy. faster-whisper is installed in this workspace, but model weights and Ollama are not installed here. The environment allows package downloads but not the model-hosting destinations. Complete the one-time model setup on your computer before a real lecture.
+Automated tests cover local-only routing, PCM conversion and segmentation, bounded ordered queues, retry retention, offline worker configuration, Korean hints, and Ollama fallback. Model calls in these tests use fixtures; they do not measure live transcription accuracy. faster-whisper is installed in this workspace, but model weights and Ollama are not installed here. MLX GPU execution requires an actual Apple Silicon Mac; its integration is contract-tested with mocks here. The environment allows package downloads but not the model-hosting destinations. Complete the one-time model setup on your computer before a real lecture.
 
 References: [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [Ollama](https://ollama.com/), [Qwen2.5](https://github.com/QwenLM/Qwen2.5).

@@ -68,11 +68,30 @@ test('PCM encoding downsamples 48 kHz to 16 kHz signed little endian', () => {
   assert.equal(bytes.length, 32000); assert.equal(bytes.readInt16LE(0), 16384);
   assert.equal(Buffer.from(pcmBase64(new Float32Array(16000).fill(-1), 16000), 'base64').readInt16LE(0), -32768);
 });
-test('capture chunks continuous speech with overlap and flushes the final partial chunk', () => {
+test('speech queues its first preview at 350 ms and finalizes after a pause', () => {
   const chunks = [], segmenter = new Segmenter(16000, chunk => chunks.push(chunk));
-  for (let i = 0; i < 11; i++) segmenter.push(new Float32Array(16000).fill(0.1));
-  segmenter.flush(); assert.equal(chunks.length, 2); assert.equal(chunks[0].seconds, 0); assert.equal(chunks[1].seconds, 9.6); assert.equal(chunks[1].overlap, true);
-  assert.equal(Buffer.from(chunks[1].audio, 'base64').length, 44800);
+  for (let i = 0; i < 18; i++) segmenter.push(new Float32Array(320).fill(0.1));
+  assert.equal(chunks.length, 1); assert.equal(chunks[0].final, false);
+  assert.ok(Buffer.from(chunks[0].audio, 'base64').length <= 16000 * 2 * 0.37);
+  for (let i = 0; i < 25; i++) segmenter.push(new Float32Array(320));
+  assert.equal(chunks.length, 2); assert.equal(chunks[1].final, true); assert.equal(chunks[1].id, chunks[0].id);
+  for (let i = 0; i < 100; i++) segmenter.push(new Float32Array(320));
+  segmenter.flush(); assert.equal(chunks.length, 2);
+});
+test('silence and isolated clicks create no transcription requests', () => {
+  const chunks = [], segmenter = new Segmenter(16000, chunk => chunks.push(chunk));
+  for (let i = 0; i < 1000; i++) segmenter.push(new Float32Array(320));
+  segmenter.push(new Float32Array(320).fill(0.3));
+  for (let i = 0; i < 100; i++) segmenter.push(new Float32Array(320));
+  segmenter.flush(); assert.deepEqual(chunks, []);
+  assert.ok(segmenter.preLength <= 3200);
+});
+test('continuous speech has bounded context and overlapping finalized sections', () => {
+  const chunks = [], segmenter = new Segmenter(16000, chunk => chunks.push(chunk));
+  for (let i = 0; i < 550; i++) segmenter.push(new Float32Array(320).fill(0.1));
+  segmenter.flush(); const finals = chunks.filter(x => x.final);
+  assert.equal(finals.length, 2); assert.equal(finals[0].seconds, 0); assert.equal(finals[1].seconds, 7.6); assert.equal(finals[1].overlap, true);
+  assert.ok(chunks.every(x => Buffer.from(x.audio, 'base64').length <= 16000 * 2 * 8.02));
 });
 test('overlap deduplication removes repeated boundary words only', () => {
   assert.equal(removeOverlap('이것이 기회비용의 정의입니다', '기회비용의 정의입니다. 다음은 매몰비용입니다.'), '다음은 매몰비용입니다.');
@@ -93,8 +112,35 @@ test('pending transcript entries update in place and remain chronologically orde
   const transcript = new Transcript(); transcript.set('b', { seconds: 3 }); transcript.set('a', { seconds: 0, text: '첫 문장', final: true }); transcript.set('b', { text: '둘째 문장', final: true });
   assert.equal(transcript.items.size, 2); assert.deepEqual(transcript.ordered().map(x => x.text), ['첫 문장', '둘째 문장']);
 });
-test('stop immediately after a forced split does not retranscribe overlap alone', () => {
+test('stop after a forced split does not retranscribe overlap alone', () => {
   const chunks = [], segmenter = new Segmenter(16000, chunk => chunks.push(chunk));
-  for (let i = 0; i < 10; i++) segmenter.push(new Float32Array(16000).fill(0.1));
-  segmenter.flush(); assert.equal(chunks.length, 1);
+  for (let i = 0; i < 400; i++) segmenter.push(new Float32Array(320).fill(0.1));
+  segmenter.flush(); assert.equal(chunks.filter(x => x.final).length, 1);
+});
+test('slow processing coalesces previews and replaces the last preview with final audio', async () => {
+  const processed = []; let release;
+  const queue = new AudioQueue(async item => {
+    processed.push(item);
+    if (processed.length === 1) await new Promise(resolve => { release = resolve; });
+  });
+  queue.enqueue({ id: 'one', final: false, text: 'a' });
+  for (const text of ['ab', 'abc', 'abcd']) queue.enqueue({ id: 'one', final: false, text });
+  assert.equal(queue.items.length, 2); assert.equal(queue.items[1].text, 'abcd');
+  queue.enqueue({ id: 'one', final: true, text: 'corrected' });
+  release(); await queue.settle();
+  assert.deepEqual(processed.map(x => x.text), ['a', 'corrected']);
+});
+test('preview failure does not stop recording; full final audio is still processed', async () => {
+  const processed = [];
+  const queue = new AudioQueue(async item => { if (!item.final) throw Error('preview failure'); processed.push(item.id); });
+  queue.enqueue({ id: 'one', final: false }); queue.enqueue({ id: 'one', final: true });
+  await queue.settle(); assert.deepEqual(processed, ['one']); assert.equal(queue.failed, null);
+});
+test('full queue skips previews but retains final audio for retry', async () => {
+  let release; const seen = [];
+  const queue = new AudioQueue(async item => { seen.push(item.id); if (item.id === 'first') await new Promise(resolve => { release = resolve; }); }, () => {}, 2);
+  queue.enqueue({ id: 'first', final: true }); queue.enqueue({ id: 'second', final: true });
+  assert.equal(queue.enqueue({ id: 'preview', final: false }), true);
+  assert.equal(queue.enqueue({ id: 'third', final: true }), false);
+  assert.equal(queue.items.length, 2); release(); await queue.settle(); assert.deepEqual(seen, ['first', 'second']);
 });
