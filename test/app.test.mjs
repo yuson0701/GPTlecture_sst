@@ -144,3 +144,21 @@ test('full queue skips previews but retains final audio for retry', async () => 
   assert.equal(queue.enqueue({ id: 'third', final: true }), false);
   assert.equal(queue.items.length, 2); release(); await queue.settle(); assert.deepEqual(seen, ['first', 'second']);
 });
+
+test('block paraphrases ignore earlier notes and use local Ollama even after streaming setup', async t => {
+  const { post } = await serve(t, { env: { STT_BACKEND: 'sherpa', LECTURE_SUMMARY_MODE: 'extractive' }, fetcher: async (url, options) => {
+    assert.equal(url, 'http://127.0.0.1:11434/api/chat');
+    const body = JSON.parse(options.body);
+    assert.equal(body.model, 'qwen2.5:3b');
+    assert.deepEqual(JSON.parse(body.messages[1].content), { previous_summary: '', new_transcript: '이 블록의 강의 원문' });
+    assert.match(body.messages[0].content, /블록만/);
+    return Response.json({ message: { content: '이 블록을 쉽게 풀어쓴 내용' } });
+  } });
+  const result = await (await post('/api/summary', { block: true, live: true, previous: '이전 블록은 넣지 마세요', transcript: '이 블록의 강의 원문' })).json();
+  assert.equal(result.method, 'ollama');
+  assert.equal(result.summary, '이 블록을 쉽게 풀어쓴 내용');
+});
+test('block fallback never mixes earlier notes into the current source', async () => {
+  const result = await localSummary({ block: true, previous: '이전 블록의 내용은 포함되면 안 됩니다.', transcript: '현재 블록에 포함된 강의 원문입니다.' }, { env: {}, fetcher: async () => { throw Error('offline'); } });
+  assert.equal(result.method, 'extractive'); assert.doesNotMatch(result.summary, /이전 블록/);
+});

@@ -50,7 +50,7 @@ export function createApp({ env = process.env, fetcher = fetch, transcriber = ne
       if (typeof body.transcript !== 'string' || !body.transcript.trim() || body.transcript.length > 7000 || typeof body.previous !== 'string' || body.previous.length > 6000) return json(res, 400, { error: 'Invalid summary input' });
       if (summaryBusy) return json(res, 429, { error: '요약 처리 중입니다. 잠시 후 다시 시도해 주세요.' });
       summaryBusy = true;
-      try { json(res, 200, await localSummary(body, { env: { ...env, SUMMARY_MODE: body.live && streaming ? (env.LECTURE_SUMMARY_MODE || 'extractive') : env.SUMMARY_MODE }, fetcher })); } finally { summaryBusy = false; }
+      try { json(res, 200, await localSummary(body, { env: { ...env, SUMMARY_MODE: body.block === true ? 'ollama' : body.live && streaming ? (env.LECTURE_SUMMARY_MODE || 'extractive') : env.SUMMARY_MODE }, fetcher })); } finally { summaryBusy = false; }
     } catch { if (!res.headersSent) json(res, 500, { error: '로컬 처리에 실패했습니다. 설정을 확인한 후 다시 시도해 주세요.' }); else res.end(); }
   });
   server.on('close', () => transcriber.close());

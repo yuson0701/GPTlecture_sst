@@ -30,7 +30,7 @@ The recommended mode now uses [sherpa-onnx's Korean streaming Zipformer](https:/
 - Keeps at most one request in flight; packets have sequence numbers and retries cannot decode the same audio twice.
 - Uses two CPU threads. Consumed feature frames are discarded; endpoint resets retain unread lookahead rather than dropping audio at sentence boundaries.
 - Updates only changed transcript rows. Earlier lecture text stays in memory for scrolling and export without rebuilding the entire page on every word.
-- Uses lightweight sentence extraction during live recording so Ollama does not compete with recognition by default.
+- Shows each summary block alongside its source; local Ollama paraphrases one block at a time.
 
 The timing display reports the **latest packet's inference time and capture-to-response delay**. It is a diagnostic, not a measurement of when each spoken word became recognizable: model lookahead and linguistic context add latency. If ten packets (about two seconds of audio) accumulate, recording stops visibly and drains already-received audio instead of quietly slipping 10–20 seconds behind. A hard queue overflow is explicitly marked; audio is never silently skipped to make the display look faster.
 
@@ -51,25 +51,19 @@ Use Chrome or Edge on the same computer as the server and allow microphone acces
 
 Enter a lecture title, click **강의 시작**, then **종료** when finished. Stop flushes remaining samples and processes pending results. Use **노트 내보내기** to download Markdown before closing or refreshing. There is no cloud history: notes and any pending audio are in tab memory. The scripted **샘플 강의 체험** demo remains available without installed models.
 
-## Summaries
+## Block-by-block notes
 
-The low-latency setup sets:
+Every 20 seconds, finalized speech is automatically grouped into a new block. Each card immediately shows the exact timestamped source being processed, followed by a simpler Korean paraphrase. Earlier blocks stay visible. Long backlogs are divided into smaller blocks; **지금 요약** creates the next block immediately, and stopping the lecture processes the remainder. Failed requests retry the same source block. Markdown export preserves every source/paraphrase pair.
 
-```dotenv
-LECTURE_SUMMARY_MODE=extractive
+Paraphrasing requires local [Ollama](https://ollama.com/). Install and launch Ollama, then download the default model once:
+
+```sh
+ollama pull qwen2.5:3b
 ```
 
-During recording, this selects existing key sentences from the lecture and prior notes. The UI labels it **핵심 문장 추출 · AI 설명 아님**. It does not invent explanations. This is a deliberate speed/summary-quality tradeoff for live lectures.
+No OpenAI API or other cloud service is used. Block requests use Ollama even if the earlier streaming setup selected extractive summaries. An existing `OLLAMA_MODEL` setting takes precedence; otherwise blocks use `qwen2.5:3b`. If Ollama/model loading fails, that block shows **핵심 문장 추출 · 바꿔쓰기 아님** with a setup message. Extracted sentences are not presented as paraphrases.
 
-If you prefer generative Korean explanations while recording, install and run [Ollama](https://ollama.com/), run `ollama pull qwen2.5:3b`, and set:
-
-```dotenv
-LECTURE_SUMMARY_MODE=ollama
-OLLAMA_MODEL=qwen2.5:3b
-SUMMARY_MODE=ollama
-```
-
-This consumes more memory and compute and can increase recognition delay. No external API is used: requests go only to local Ollama. If Ollama is unavailable, notes fall back to labeled sentence extraction. Summaries update every 20 seconds when new finalized text is available; provisional text is not summarized.
+Each request contains only its own source block, never a cumulative summary. Paraphrasing runs separately from transcription, with one summary request at a time and a two-thread CPU setting. Local model inference still consumes compute and memory and may affect STT latency on a fanless Mac. Only finalized speech is included; provisional words stay in the transcript until finalized.
 
 ## Existing Whisper modes
 

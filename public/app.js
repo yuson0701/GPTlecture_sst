@@ -2,11 +2,11 @@ import { Transcript, timestamp } from './transcript.js';
 import { Microphone, AudioQueue, removeOverlap } from './audio.js';
 import { StreamingFrames, StreamingQueue } from './streaming.js';
 const $ = id => document.getElementById(id);
-let transcript = new Transcript(), microphone, queue, timer, demoTimer, mode = 'idle', started = 0, elapsed = 0, summary = '', summaryMethod = '', configured = false, summarizing = false;
+let transcript = new Transcript(), microphone, queue, timer, demoTimer, mode = 'idle', started = 0, elapsed = 0, summaryBlocks = [], configured = false, summarizing = false;
 const summarized = new Set();
 let streaming = false, streamingRows = new Map(), finalRows = 0, streamSession = null;
 const demoLines = ['오늘은 경제학의 기본 개념인 기회비용에 대해 알아보겠습니다. 기회비용은 어떤 선택을 했을 때 포기한 대안 중 가장 가치 있는 것의 가치입니다.', '예를 들어 두 시간 동안 아르바이트를 하면 2만 원을 벌 수 있지만, 그 시간에 시험 공부를 선택했다면 포기한 2만 원이 기회비용에 포함됩니다.', '여기서 중요한 것은 모든 대안의 가치를 더하는 것이 아니라, 포기한 대안 중 가장 좋은 하나만 고려한다는 점입니다.', '이미 지출해서 회수할 수 없는 비용은 매몰비용이라고 합니다. 합리적인 의사결정에서는 매몰비용보다 앞으로 발생할 비용과 편익을 비교해야 합니다.'];
-const demoSummary = '핵심 요약\n선택에는 기회비용이 따릅니다. 포기한 대안 중 가장 가치 있는 하나를 기준으로 생각합니다.\n\n주요 개념\n• 기회비용: 선택으로 포기한 최선의 대안의 가치\n• 매몰비용: 이미 지출해서 회수할 수 없는 비용\n\n쉽게 이해하기\n공부를 선택해 아르바이트를 못 했다면, 포기한 임금이 기회비용에 포함됩니다.\n\n확인할 점\n의사결정에서는 앞으로의 비용과 편익을 비교합니다.';
+const demoParaphrases = ['기회비용은 선택 때문에 포기한 대안 중 가장 가치 있는 하나를 뜻합니다.', '공부 때문에 아르바이트를 하지 못했다면, 벌 수 있었던 2만 원이 기회비용에 포함됩니다.', '기회비용은 포기한 모든 대안의 합이 아니라, 가장 좋은 대안 하나의 가치입니다.', '매몰비용은 이미 써서 돌려받을 수 없는 돈입니다. 선택할 때는 앞으로의 비용과 이익을 비교해야 합니다.'];
 function error(message) { $('error').textContent = message; $('error').hidden = !message; }
 function controls() {
   const active = mode !== 'idle';
@@ -71,29 +71,63 @@ function renderStreaming(events) {
   $('count').textContent = `${finalRows}개 구간 · 실시간 스트리밍`;
   if (events.length) controls();
 }
-function renderSummary() { const p = document.createElement('p'); p.className = 'summary-copy'; p.textContent = summary; $('summary').replaceChildren(p); }
+const summaryLabels = { ollama: '쉽게 풀어쓴 내용', extractive: '핵심 문장 추출 · 바꿔쓰기 아님', demo: '쉽게 풀어쓴 내용 · 샘플' };
+function renderSummary(block) {
+  const target = $('summary'), atBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 100;
+  let card = target.querySelector(`[data-block="${block.id}"]`);
+  if (!card) {
+    if (!target.querySelector('.summary-block')) target.replaceChildren();
+    card = document.createElement('article'); card.className = 'summary-block'; card.dataset.block = block.id;
+    const heading = document.createElement('h3'); heading.textContent = `블록 ${block.id} · ${timestamp(block.items[0].seconds)}`;
+    const label = document.createElement('h4'); label.textContent = '이 블록의 원문';
+    const source = document.createElement('p'); source.className = 'block-source'; source.textContent = block.source;
+    const status = document.createElement('h4'); status.className = 'block-status';
+    const result = document.createElement('p'); result.className = 'summary-copy';
+    card.append(heading, label, source, status, result); target.append(card);
+  }
+  card.setAttribute('aria-busy', String(block.state === 'pending'));
+  card.querySelector('.block-status').textContent = block.state === 'pending' ? '이 원문을 쉽게 풀어쓰는 중…' : block.state === 'failed' ? '처리 실패 · 지금 요약으로 재시도' : summaryLabels[block.method];
+  card.querySelector('.summary-copy').textContent = block.warning ? `${block.text || ''}\n${block.warning}` : block.text || '';
+  if (atBottom) target.scrollTop = target.scrollHeight;
+}
 function reset() {
-  transcript = new Transcript(); streamingRows = new Map(); finalRows = 0; streamSession = null; summarized.clear(); summary = ''; summaryMethod = ''; elapsed = 0; queue = null; $('latency').textContent = ''; error('');
-  $('summary').textContent = '강의 내용을 기다리고 있습니다.'; $('transcript').textContent = '말씀하시면 여기에 실시간 초안이 나타납니다. 조용할 때는 기다립니다.'; $('timer').textContent = '00:00'; $('count').textContent = '0개 구간'; $('summary-status').textContent = streaming ? '실시간 핵심 문장 추출 · 20초마다 갱신' : '새 내용이 쌓이면 20초마다 갱신';
+  transcript = new Transcript(); streamingRows = new Map(); finalRows = 0; streamSession = null; summarized.clear(); summaryBlocks = []; elapsed = 0; queue = null; $('latency').textContent = ''; error('');
+  $('summary').textContent = '강의 내용을 기다리고 있습니다.'; $('transcript').textContent = '말씀하시면 여기에 실시간 초안이 나타납니다. 조용할 때는 기다립니다.'; $('timer').textContent = '00:00'; $('count').textContent = '0개 구간'; $('summary-status').textContent = '20초마다 새 원문 블록 · 블록별 바꿔쓰기';
 }
 function canReset() { return !transcript.items.size || window.confirm('현재 노트를 내보내셨나요? 새 강의를 시작하면 기존 노트와 미처리 음성이 지워집니다.'); }
 function clock() { started = Date.now(); timer = setInterval(() => { elapsed = (Date.now() - started) / 1000; $('timer').textContent = timestamp(elapsed); }, 500); }
-function pendingSummary() { return transcript.ordered().filter(x => x.final && x.text && !x.failed && !summarized.has(x.id)); }
+function pendingSummary() {
+  return transcript.ordered().filter(x => x.final && x.text && !x.failed).flatMap(item => {
+    const parts = [];
+    for (let offset = 0; offset < item.text.length; offset += 3000) parts.push({ ...item, id: `${item.id}:${offset}`, text: item.text.slice(offset, offset + 3000) });
+    return parts;
+  }).filter(item => !summarized.has(item.id));
+}
 async function summarize() {
   if (summarizing || mode === 'demo') return false;
-  const batch = []; let length = 0;
-  for (const item of pendingSummary()) { if (length + item.text.length > 6400) break; batch.push(item); length += item.text.length + 20; }
-  if (!batch.length) return false;
-  summarizing = true; controls(); $('summary-status').textContent = '이 컴퓨터에서 정리하고 있어요…';
+  let block = summaryBlocks.find(item => item.state === 'failed');
+  if (!block) {
+    const batch = []; let length = 0;
+    for (const item of pendingSummary()) {
+      if (batch.length && (length + item.text.length + 20 > 6400 || item.seconds - batch[0].seconds >= 20)) break;
+      batch.push(item); length += item.text.length + 20;
+    }
+    if (!batch.length) return false;
+    block = { id: summaryBlocks.length + 1, items: batch, source: batch.map(x => `[${timestamp(x.seconds)}] ${x.text}`).join('\n'), state: 'pending' };
+    summaryBlocks.push(block);
+  }
+  block.state = 'pending'; block.warning = ''; renderSummary(block);
+  summarizing = true; controls(); $('summary-status').textContent = `블록 ${block.id} · 원문을 쉽게 풀어쓰는 중…`;
   try {
-    const result = await api('/api/summary', { previous: summary, live: mode === 'live' || mode === 'stopping', transcript: batch.map(x => `[${timestamp(x.seconds)}] ${x.text}`).join('\n') });
-    summary = result.summary; summaryMethod = result.method; batch.forEach(x => summarized.add(x.id)); renderSummary();
-    $('summary-status').textContent = result.method === 'ollama' ? '로컬 AI 요약 · Qwen' : '핵심 문장 추출 · AI 설명 아님';
-    if (result.warning) $('notice').textContent = result.warning;
+    const result = await api('/api/summary', { previous: '', block: true, live: mode === 'live' || mode === 'stopping', transcript: block.source });
+    block.text = result.summary; block.method = result.method; block.warning = result.warning || ''; block.state = 'done';
+    block.items.forEach(x => summarized.add(x.id)); renderSummary(block);
+    $('summary-status').textContent = `블록 ${block.id} 완료 · ${summaryLabels[result.method]}`;
     return true;
-  } catch (e) { error(e.message); $('summary-status').textContent = '요약 실패 · 지금 요약으로 다시 시도'; return false; }
+  } catch (e) { block.state = 'failed'; block.warning = e.message; renderSummary(block); $('summary-status').textContent = '블록 처리 실패 · 지금 요약으로 다시 시도'; return false; }
   finally { summarizing = false; controls(); }
 }
+
 async function finalSummary() {
   while (summarizing) await new Promise(resolve => setTimeout(resolve, 100));
   while (pendingSummary().length) { if (!await summarize()) break; }
@@ -172,14 +206,16 @@ $('retry').onclick = async () => {
 $('demo').onclick = () => {
   if (!canReset()) return; reset(); mode = 'demo'; $('title').value = '경제학개론 · 기회비용'; $('status').textContent = '샘플 강의 재생'; $('notice').textContent = '데모 · 미리 작성된 전사와 요약입니다. 마이크나 AI 모델을 사용하지 않습니다.'; clock(); controls(); let i = 0;
   const next = () => {
-    transcript.set(`demo-${i}`, { text: demoLines[i], seconds: elapsed, final: true }); summarized.add(`demo-${i}`); render(); i++;
-    if (i === demoLines.length) { summary = demoSummary; summaryMethod = 'demo'; renderSummary(); $('summary-status').textContent = '샘플 요약 · 미리 작성된 예시'; clearInterval(timer); clearInterval(demoTimer); mode = 'idle'; $('status').textContent = '샘플 강의 종료'; controls(); }
+    transcript.set(`demo-${i}`, { text: demoLines[i], seconds: elapsed, final: true }); summarized.add(`demo-${i}:0`); render();
+    const block = { id: i + 1, items: [{ seconds: elapsed }], source: `[${timestamp(elapsed)}] ${demoLines[i]}`, text: demoParaphrases[i], method: 'demo', state: 'done' };
+    summaryBlocks.push(block); renderSummary(block); i++;
+    if (i === demoLines.length) {  $('summary-status').textContent = '샘플 요약 · 미리 작성된 예시'; clearInterval(timer); clearInterval(demoTimer); mode = 'idle'; $('status').textContent = '샘플 강의 종료'; controls(); }
   }; demoTimer = setInterval(next, 2200); next();
 };
 $('summarize').onclick = () => void summarize();
 $('export').onclick = () => {
-  const labels = { ollama: '로컬 AI 요약', extractive: '핵심 문장 추출 (AI 설명 아님)', demo: '미리 작성된 샘플' };
-  const content = `# ${$('title').value || '강의 노트'}\n\n## ${labels[summaryMethod] || '요약'}\n${summary || '(요약 없음)'}\n\n## 전사\n${transcript.ordered().map(x => `[${timestamp(x.seconds)}] ${x.text || '(음성 없음)'}${x.final ? '' : ' [미확정 초안 / 재처리 필요]'}`).join('\n\n')}\n`;
+  const blocks = summaryBlocks.map(block => `### 블록 ${block.id} · ${timestamp(block.items[0].seconds)}\n\n원문\n${block.source}\n\n${summaryLabels[block.method] || '처리 중 / 재시도 필요'}\n${block.text || '(아직 처리되지 않음)'}${block.warning ? '\n' + block.warning : ''}`).join('\n\n');
+  const content = `# ${$('title').value || '강의 노트'}\n\n## 블록별 노트\n${blocks || '(요약 없음)'}\n\n## 전사\n${transcript.ordered().map(x => `[${timestamp(x.seconds)}] ${x.text || '(음성 없음)'}${x.final ? '' : ' [미확정 초안 / 재처리 필요]'}`).join('\n\n')}\n`;
   const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' })); const a = document.createElement('a'); a.href = url; a.download = 'lecture-notes.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 setInterval(() => { if (mode === 'live') void summarize(); }, 20000);
