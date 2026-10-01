@@ -1,4 +1,4 @@
-"""Persistent offline Whisper worker, with optional Apple Silicon GPU support."""
+"""Persistent offline Korean streaming or Whisper recognition worker."""
 import base64
 import importlib.util
 import json
@@ -13,9 +13,9 @@ model = None
 
 
 def backend():
-    name = os.environ.get('WHISPER_BACKEND', 'faster-whisper')
-    if name not in ('faster-whisper', 'mlx'):
-        raise RuntimeError('WHISPER_BACKEND는 faster-whisper 또는 mlx로 설정하세요.')
+    name = os.environ.get('STT_BACKEND') or os.environ.get('WHISPER_BACKEND', 'faster-whisper')
+    if name not in ('faster-whisper', 'mlx', 'sherpa'):
+        raise RuntimeError('STT_BACKEND는 sherpa, faster-whisper 또는 mlx로 설정하세요.')
     return name
 
 
@@ -44,6 +44,24 @@ def validate_platform():
 def dispatch(request):
     global model
     engine = backend()
+    if engine == 'sherpa':
+        from streaming import StreamingRecognizer, available
+        if request.get('action') == 'status':
+            installed = importlib.util.find_spec('sherpa_onnx') is not None
+            return {'available': installed and available(), 'backend': 'sherpa',
+                    'reason': 'dependencies' if not installed else 'model' if not available() else None}
+        if request.get('action') not in ('load', 'transcribe'):
+            raise ValueError('Unknown action')
+        if model is None:
+            model = StreamingRecognizer()
+        if request['action'] == 'load':
+            return model.start()
+        import numpy as np
+        audio = base64.b64decode(request['audio'], validate=True)
+        if len(audio) > 64000 or len(audio) % 2 or (not audio and not request.get('final')):
+            raise ValueError('Invalid streaming PCM')
+        samples = np.frombuffer(audio, dtype='<i2').astype(np.float32) / 32768.0
+        return model.accept(samples, request.get('session'), request.get('sequence'), request.get('final', False))
     if request.get('action') == 'status':
         try:
             validate_platform()

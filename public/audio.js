@@ -113,10 +113,10 @@ export class AudioQueue {
 }
 
 export class Microphone {
-  async start(onChunk, onEnded) {
+  async start(onChunk, onEnded, createSegmenter = (rate, callback) => new Segmenter(rate, callback)) {
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });
-      this.context = new AudioContext(); this.segmenter = new Segmenter(this.context.sampleRate, onChunk);
+      this.context = new AudioContext(); this.segmenter = createSegmenter(this.context.sampleRate, onChunk);
       await this.context.audioWorklet.addModule('/capture-worklet.js');
       this.source = this.context.createMediaStreamSource(this.stream);
       this.node = new AudioWorkletNode(this.context, 'lecture-capture');

@@ -4,10 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { LocalTranscriber } from './local/transcriber.mjs';
 import { localSummary } from './local/summary.mjs';
 
-const files = new Map([['/', ['index.html', 'text/html']], ...['app.js', 'transcript.js', 'audio.js', 'capture-worklet.js'].map(file => ['/' + file, [file, 'text/javascript']]), ['/style.css', ['style.css', 'text/css']]]);
+const files = new Map([['/', ['index.html', 'text/html']], ...['app.js', 'transcript.js', 'audio.js', 'capture-worklet.js', 'streaming.js'].map(file => ['/' + file, [file, 'text/javascript']]), ['/style.css', ['style.css', 'text/css']]]);
 export function createApp({ env = process.env, fetcher = fetch, transcriber = new LocalTranscriber(env) } = {}) {
   const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
   let sttBusy = false, summaryBusy = false;
+  const streaming = (env.STT_BACKEND || env.WHISPER_BACKEND) === 'sherpa';
   const server = http.createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -17,7 +18,7 @@ export function createApp({ env = process.env, fetcher = fetch, transcriber = ne
       if (!/^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(host || '')) return json(res, 403, { error: 'Local access only.' });
       if (req.method === 'GET' && req.url === '/api/config') {
         let status; try { status = await transcriber.request('status'); } catch { status = { available: false }; }
-        return json(res, 200, { configured: status.available, reason: status.reason, model: env.WHISPER_BACKEND === 'mlx' ? `MLX · Apple GPU · ${env.MLX_WHISPER_MODEL || 'whisper-turbo'}` : `faster-whisper · ${env.WHISPER_MODEL || 'large-v3-turbo'}`, summary: env.SUMMARY_MODE === 'extractive' ? 'extractive' : 'ollama', local: true });
+        return json(res, 200, { configured: status.available, reason: status.reason, streaming, model: streaming ? 'Korean Zipformer · 실시간 스트리밍' : (env.STT_BACKEND || env.WHISPER_BACKEND) === 'mlx' ? `MLX · Apple GPU · ${env.MLX_WHISPER_MODEL || 'whisper-turbo'}` : `faster-whisper · ${env.WHISPER_MODEL || 'large-v3-turbo'}`, summary: env.SUMMARY_MODE === 'extractive' ? 'extractive' : 'ollama', local: true });
       }
       if (['GET', 'HEAD'].includes(req.method) && files.has(req.url)) {
         const [file, mime] = files.get(req.url), content = await readFile(new URL(`./public/${file}`, import.meta.url));
@@ -34,20 +35,22 @@ export function createApp({ env = process.env, fetcher = fetch, transcriber = ne
         if (typeof body.glossary !== 'string' || body.glossary.length > 1500) return json(res, 400, { error: '용어는 1,500자 이내로 입력해 주세요.' });
         if (req.url === '/api/transcribe') {
           if (body.final !== undefined && typeof body.final !== 'boolean') return json(res, 400, { error: 'Invalid transcription mode' });
-          if (typeof body.audio !== 'string' || body.audio.length > 640000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(body.audio) || body.audio.length % 4) return json(res, 400, { error: 'Invalid PCM audio' });
+          if (typeof body.audio !== 'string' || body.audio.length > 640000 || !/^[A-Za-z0-9+/]*={0,2}$/.test(body.audio) || body.audio.length % 4) return json(res, 400, { error: 'Invalid PCM audio' });
           const audio = Buffer.from(body.audio, 'base64');
-          if (audio.length < 3200 || audio.length > 480000 || audio.length % 2) return json(res, 400, { error: 'Invalid PCM audio length' });
+          if (streaming) {
+            if (typeof body.session !== 'string' || !Number.isSafeInteger(body.sequence) || body.sequence < 0 || audio.length > 64000 || audio.length % 2 || (!audio.length && !body.final)) return json(res, 400, { error: 'Invalid streaming input' });
+          } else if (audio.length < 3200 || audio.length > 480000 || audio.length % 2) return json(res, 400, { error: 'Invalid PCM audio length' });
         }
         if (sttBusy) return json(res, 429, { error: '음성 처리 중입니다. 다른 강의 탭을 종료해 주세요.' });
         sttBusy = true;
-        try { const result = await transcriber.request(req.url === '/api/session' ? 'load' : 'transcribe', { audio: body.audio, glossary: body.glossary, final: body.final !== false }); return json(res, 200, result); }
+        try { const result = await transcriber.request(req.url === '/api/session' ? 'load' : 'transcribe', { audio: body.audio, glossary: body.glossary, final: body.final !== false, session: body.session, sequence: body.sequence }); return json(res, 200, result); }
         catch (error) { return json(res, 503, { error: error.message }); }
         finally { sttBusy = false; }
       }
       if (typeof body.transcript !== 'string' || !body.transcript.trim() || body.transcript.length > 7000 || typeof body.previous !== 'string' || body.previous.length > 6000) return json(res, 400, { error: 'Invalid summary input' });
       if (summaryBusy) return json(res, 429, { error: '요약 처리 중입니다. 잠시 후 다시 시도해 주세요.' });
       summaryBusy = true;
-      try { json(res, 200, await localSummary(body, { env, fetcher })); } finally { summaryBusy = false; }
+      try { json(res, 200, await localSummary(body, { env: { ...env, SUMMARY_MODE: body.live && streaming ? (env.LECTURE_SUMMARY_MODE || 'extractive') : env.SUMMARY_MODE }, fetcher })); } finally { summaryBusy = false; }
     } catch { if (!res.headersSent) json(res, 500, { error: '로컬 처리에 실패했습니다. 설정을 확인한 후 다시 시도해 주세요.' }); else res.end(); }
   });
   server.on('close', () => transcriber.close());
