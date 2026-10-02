@@ -1,0 +1,3 @@
+# Reviewed MLX Audio revision; isolate from the existing Zipformer/Whisper environment.
+mlx-audio[stt] @ https://github.com/Blaizzy/mlx-audio/archive/94c7716212b2228f178d2f9c7619a591fd1b0b78.tar.gz
+faster-whisper>=1.2,<2

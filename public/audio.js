@@ -12,8 +12,8 @@ export function pcmBase64(samples, sampleRate) {
 
 // Speech-gated rolling recognition. Silence never creates a transcript request.
 export class Segmenter {
-  constructor(sampleRate, onChunk, { threshold = 0.008, previewSeconds = 0.35, pauseSeconds = 0.5 } = {}) {
-    this.rate = sampleRate; this.onChunk = onChunk; this.threshold = threshold;
+  constructor(sampleRate, onChunk, { threshold = 0.008, previewSeconds = 0.35, pauseSeconds = 0.5, maxSeconds = 8 } = {}) {
+    this.maxSeconds = maxSeconds; this.rate = sampleRate; this.onChunk = onChunk; this.threshold = threshold;
     this.previewSamples = sampleRate * previewSeconds; this.pauseSamples = sampleRate * pauseSeconds;
     this.parts = []; this.length = 0; this.total = 0; this.silent = 0; this.speech = 0;
     this.preRoll = []; this.preLength = 0; this.active = false; this.serial = 0;
@@ -37,7 +37,7 @@ export class Segmenter {
     this.parts.push(samples); this.length += samples.length;
     if (voiced) { this.speech += samples.length; this.silent = 0; } else this.silent += samples.length;
     if (this.silent >= this.pauseSamples) this.finish(false);
-    else if (this.length >= this.rate * 8) this.finish(true);
+    else if (this.length >= this.rate * this.maxSeconds) this.finish(true);
     else if (voiced && this.speech >= this.rate * 0.16 && this.length - this.lastPreview >= this.previewSamples) {
       this.emit(false); this.lastPreview = this.length;
     }

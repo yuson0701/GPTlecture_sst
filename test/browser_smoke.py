@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory() as temp, sync_playwright() as p:
     errors, requests, summaries = [], [], []
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.on('dialog', lambda dialog: dialog.accept())
-    page.route('**/api/config', lambda route: route.fulfill(json={'configured': True, 'model': 'Test fixture'}))
+    page.route('**/api/config', lambda route: route.fulfill(json={'configured': True, 'model': 'Test fixture', 'backend': os.environ.get('TEST_BACKEND')}))
     page.route('**/api/session', lambda route: route.fulfill(json={'loaded': True}))
     fail_final = False
     def transcribe(route):

@@ -1,5 +1,6 @@
 """Persistent offline Korean streaming or Whisper recognition worker."""
 import base64
+import contextlib
 import importlib.util
 import json
 import os
@@ -14,8 +15,8 @@ model = None
 
 def backend():
     name = os.environ.get('STT_BACKEND') or os.environ.get('WHISPER_BACKEND', 'faster-whisper')
-    if name not in ('faster-whisper', 'mlx', 'sherpa'):
-        raise RuntimeError('STT_BACKEND는 sherpa, faster-whisper 또는 mlx로 설정하세요.')
+    if name not in ('faster-whisper', 'mlx', 'sherpa', 'qwen-mlx'):
+        raise RuntimeError('STT_BACKEND는 qwen-mlx, sherpa, faster-whisper 또는 mlx로 설정하세요.')
     return name
 
 
@@ -44,6 +45,22 @@ def validate_platform():
 def dispatch(request):
     global model
     engine = backend()
+    if engine == 'qwen-mlx':
+        from qwen_asr import QwenRecognizer, status
+        if request.get('action') == 'status':
+            return status()
+        if request.get('action') not in ('load', 'transcribe'):
+            raise ValueError('Unknown action')
+        with contextlib.redirect_stdout(sys.stderr):
+            if model is None:
+                model = QwenRecognizer()
+            if request['action'] == 'load':
+                return {'loaded': True}
+            import numpy as np
+            audio = base64.b64decode(request['audio'], validate=True)
+            if not 3200 <= len(audio) <= 256000 or len(audio) % 2:
+                raise ValueError('Invalid Qwen PCM')
+            return model.transcribe(np.frombuffer(audio, dtype='<i2').astype(np.float32) / 32768, request.get('glossary', ''))
     if engine == 'sherpa':
         from streaming import StreamingRecognizer, available
         if request.get('action') == 'status':

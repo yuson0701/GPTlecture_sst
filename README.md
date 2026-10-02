@@ -2,7 +2,57 @@
 
 Local Korean speech recognition and lecture notes, with no API key or cloud speech service.
 
-## Upgrade for low-latency lectures (recommended for your M5 MacBook Air)
+## New branch: Qwen3-ASR for Korean on Apple Silicon
+
+This branch adds **Qwen3-ASR-1.7B (8-bit), running on the Apple GPU through MLX Audio**, as an accuracy-oriented alternative to Korean Zipformer. It also offers **0.6B (8-bit)** for a smaller model. The existing `work` branch is unchanged.
+
+Stop the app with Ctrl+C, then run:
+
+```sh
+git fetch origin
+git switch feature/qwen3-korean-asr
+npm run setup:qwen
+npm start
+```
+
+Refresh the browser. The label must say **Qwen3-ASR · Apple GPU · 1.7B**. Use native ARM Node.js and Python 3.10+ on your M5; Python 3.12 is recommended. Do not run the terminal under Rosetta. The initial setup downloads packages and model weights, uses a separate `.venv-qwen`, verifies all model files, and loads/warms the GPU **before** changing `.env`. It backs up existing settings to `.env.before-qwen`. No OpenAI API is involved, and speech stays local. GitHub hosts the implementation; Hugging Face hosts the community-converted weights.
+
+For the smaller model:
+
+```sh
+npm run setup:qwen -- --size 0.6B
+npm start
+```
+
+Only one ASR model is active. Old Zipformer/Whisper files remain installed. To restore the prior configuration, stop the app, run `cp .env.before-qwen .env`, and restart. Switching Git branches alone does not restore `.env` because it is ignored by Git.
+
+### Why this candidate
+
+| Candidate | Reason to consider it | Limitation for this app |
+| --- | --- | --- |
+| Qwen3-ASR-1.7B / MLX Audio | Korean support, vocabulary hints, multilingual benchmark evidence, native Apple GPU execution | Larger autoregressive decoder; M5 latency and lecture accuracy unmeasured |
+| Qwen3-ASR-0.6B / MLX Audio | Smaller alternative on the same backend | Upstream accuracy is lower than 1.7B on the cited multilingual sets |
+| Whisper large-v3 / faster-whisper | Established multilingual baseline | Its documented GPU path is NVIDIA CUDA; the old CPU setup caused long delays here |
+| Existing Korean Zipformer | Lightweight stateful streaming | User-reported Korean recognition quality was inadequate |
+
+Sources reviewed: [Qwen3-ASR repository and evaluation](https://github.com/QwenLM/Qwen3-ASR#evaluation), [MLX Audio Qwen support](https://github.com/Blaizzy/mlx-audio/tree/94c7716212b2228f178d2f9c7619a591fd1b0b78/mlx_audio/stt/models/qwen3_asr), [faster-whisper requirements](https://github.com/SYSTRAN/faster-whisper#requirements). Qwen reports multilingual CommonVoice WER of **9.18 for 1.7B**, **12.75 for 0.6B**, and **10.77 for Whisper large-v3**. Those are aggregated upstream results, include Korean among other languages, and are **not Korean-only scores, Zipformer comparisons, or measurements of these 8-bit MLX conversions**. Qwen's upstream code/model release is Apache-2.0; MLX Audio is MIT. The installer pins the reviewed MLX Audio source revision.
+
+### Latency and honest validation
+
+This implementation uses rolling audio windows, **not persistent Zipformer-style encoder state**. It requests drafts after approximately 0.8 seconds of speech, updates them as new audio arrives, and finalizes on a pause or after about 6 seconds. Old queued drafts are replaced, final audio is retained, and a sustained final-audio backlog stops capture visibly. Silero VAD rejects silent windows. Course vocabulary is sent through Qwen's native hotword prompt. The timing shown is request duration, not total spoken-word latency.
+
+**0–3 seconds is a target, not a verified result.** The development machine is Linux and cannot run the Apple GPU backend. Tests verify integration and failure behavior using mocked inference; real-model speed, Korean accuracy, memory use, and a full-hour thermal test must be checked on the Mac. Earlier Zipformer performance numbers below do not apply to Qwen. Ollama paragraph cleanup is separate from speech recognition and may compete for GPU/memory while recording.
+
+For a reproducible check on your own Korean recording (16 kHz mono PCM16 WAV):
+
+```sh
+.venv-qwen/bin/python scripts/benchmark_qwen.py sample.wav --model mlx-community/Qwen3-ASR-1.7B-8bit --reference transcript.txt
+```
+
+The UTF-8 reference must contain the actual spoken words. The report includes recognized text, normalized character error rate, and final-window decoding times. It excludes rolling-preview overhead and is not an end-to-end latency benchmark. Compare the output against the same recording in your lecture environment before replacing your usual setup.
+
+## Older Zipformer setup (optional comparison)
+
 
 Stop the running app with **Ctrl+C**, then run these commands in the project folder:
 

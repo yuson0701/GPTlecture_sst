@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 models/
 .env.before-realtime
+
+.venv-qwen/
+.env.before-qwen

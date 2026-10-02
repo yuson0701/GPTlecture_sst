@@ -1,10 +1,10 @@
 import { Transcript, timestamp } from './transcript.js';
-import { Microphone, AudioQueue, removeOverlap } from './audio.js';
+import { Microphone, AudioQueue, removeOverlap, Segmenter } from './audio.js';
 import { StreamingFrames, StreamingQueue } from './streaming.js';
 const $ = id => document.getElementById(id);
 let transcript = new Transcript(), microphone, queue, timer, demoTimer, mode = 'idle', started = 0, elapsed = 0, summaryBlocks = [], configured = false, summarizing = false;
 const summarized = new Set();
-let streaming = false, streamingRows = new Map(), finalRows = 0, streamSession = null;
+let qwen = false, streaming = false, streamingRows = new Map(), finalRows = 0, streamSession = null;
 const demoLines = ['오늘은 경제학의 기본 개념인 기회비용에 대해 알아보겠습니다. 기회비용은 어떤 선택을 했을 때 포기한 대안 중 가장 가치 있는 것의 가치입니다.', '예를 들어 두 시간 동안 아르바이트를 하면 2만 원을 벌 수 있지만, 그 시간에 시험 공부를 선택했다면 포기한 2만 원이 기회비용에 포함됩니다.', '여기서 중요한 것은 모든 대안의 가치를 더하는 것이 아니라, 포기한 대안 중 가장 좋은 하나만 고려한다는 점입니다.', '이미 지출해서 회수할 수 없는 비용은 매몰비용이라고 합니다. 합리적인 의사결정에서는 매몰비용보다 앞으로 발생할 비용과 편익을 비교해야 합니다.'];
 const demoParaphrases = ['기회비용은 선택 때문에 포기한 대안 중 가장 가치 있는 하나를 뜻합니다.', '공부 때문에 아르바이트를 하지 못했다면, 벌 수 있었던 2만 원이 기회비용에 포함됩니다.', '기회비용은 포기한 모든 대안의 합이 아니라, 가장 좋은 대안 하나의 가치입니다.', '매몰비용은 이미 써서 돌려받을 수 없는 돈입니다. 선택할 때는 앞으로의 비용과 이익을 비교해야 합니다.'];
 function error(message) { $('error').textContent = message; $('error').hidden = !message; }
@@ -147,6 +147,10 @@ async function finalSummary() {
 }
 function queueChanged() {
   if (mode === 'live') $('status').textContent = queue.items.length > 2 ? `듣는 중 · ${queue.items.length}개 구간 처리 대기` : '강의를 듣고 있어요';
+  if (qwen && mode === 'live' && queue.items.filter(item => item.final !== false).length >= 2) {
+    error('인식이 강의 속도를 따라가지 못해 녹음을 멈춥니다. 받은 음성은 처리합니다. 0.6B 모델을 사용하거나 다른 무거운 앱을 종료하세요.');
+    void stopLecture();
+  }
   if (streaming && mode === 'live' && queue.items.length >= 10) {
     error('인식 지연이 2초 이상 쌓여 녹음을 멈춥니다. 다른 무거운 앱을 종료하세요. 받은 음성은 모두 처리합니다.');
     void stopLecture();
@@ -183,7 +187,7 @@ $('start').onclick = async () => {
       $('latency').title = '최근 200ms 음성 패킷의 처리/대기 시간입니다. 단어 인식 지연에는 모델의 문맥 대기 시간도 포함됩니다.';
     }, queueChanged);
     else queue = new AudioQueue(async chunk => {
-      let result;
+      let result; const requestStarted = performance.now();
       try { result = await api('/api/transcribe', { audio: chunk.audio, glossary, final: chunk.final }); }
       catch (error) {
         if (chunk.final) {
@@ -191,6 +195,7 @@ $('start').onclick = async () => {
         }
         throw error;
       }
+      if (qwen) $('latency').textContent = `인식 요청 ${((performance.now() - requestStarted) / 1000).toFixed(1)}초 · 대기 ${Math.max(0, queue.items.length - 1)}개`;
       if (transcript.items.get(chunk.id)?.failed) return;
       const previous = transcript.ordered().filter(x => x.final && !x.failed && x.seconds < chunk.seconds).at(-1)?.text || '';
       const text = chunk.overlap ? removeOverlap(previous, result.text) : result.text;
@@ -199,7 +204,7 @@ $('start').onclick = async () => {
       render();
     }, queueChanged);
     microphone = new Microphone();
-    await microphone.start(enqueue, message => { error(message); if (mode === 'live') void stopLecture(); }, streaming ? (rate, callback) => new StreamingFrames(rate, callback) : undefined);
+    await microphone.start(enqueue, message => { error(message); if (mode === 'live') void stopLecture(); }, streaming ? (rate, callback) => new StreamingFrames(rate, callback) : qwen ? (rate, callback) => new Segmenter(rate, callback, { previewSeconds: 0.8, pauseSeconds: 0.5, maxSeconds: 6 }) : undefined);
     mode = 'live'; clock(); $('status').textContent = '강의를 듣고 있어요'; $('notice').textContent = '로컬 처리 중 · 음성은 이 컴퓨터에서만 처리됩니다. 말하는 동안 초안이 갱신되고, 잠시 멈추면 확정됩니다. 회색 글씨는 수정될 수 있는 초안입니다.';
   } catch (e) { microphone?.dispose(); mode = 'idle'; $('status').textContent = '시작 실패'; error(e.name === 'NotAllowedError' ? '마이크 권한을 허용한 후 다시 시도해 주세요.' : e.message); }
   controls();
@@ -234,6 +239,6 @@ $('export').onclick = () => {
 setInterval(() => { if (mode === 'live') void summarize(); }, 20000);
 window.addEventListener('beforeunload', event => { if (transcript.items.size || mode !== 'idle') { event.preventDefault(); event.returnValue = ''; } });
 window.addEventListener('pagehide', () => { microphone?.dispose(); clearInterval(timer); clearInterval(demoTimer); });
-try { const response = await fetch('/api/config'); const config = await response.json(); configured = config.configured; streaming = Boolean(config.streaming); $('glossary').placeholder = streaming ? '스트리밍 모드에서는 전공 용어 힌트를 지원하지 않습니다' : $('glossary').placeholder; $('model').textContent = config.model; $('status').textContent = configured ? '시작할 준비가 됐어요' : '로컬 음성 모델 설치 필요'; $('notice').textContent = configured ? 'API 키 없이 이 컴퓨터에서 강의를 받아씁니다. 녹음 전 강의 정책과 동의를 확인하세요.' : config.reason === 'platform' ? 'MLX는 Apple Silicon Mac과 ARM Python이 필요합니다. 다른 컴퓨터에서는 WHISPER_BACKEND=faster-whisper를 사용하세요.' : config.reason === 'model' ? streaming ? '스트리밍 모델 설치가 필요합니다: npm run setup:realtime. 설치 후 서버를 재시작하세요.' : '음성 모델 파일이 없습니다. README의 모델 다운로드 단계를 완료한 뒤 새로고침하세요. 샘플 강의는 바로 체험할 수 있습니다.' : '음성 엔진을 설치하세요. 실시간 모드: npm run setup:realtime. 샘플 강의는 바로 체험할 수 있습니다.'; }
+try { const response = await fetch('/api/config'); const config = await response.json(); configured = config.configured; streaming = Boolean(config.streaming); qwen = config.backend === 'qwen-mlx'; $('glossary').placeholder = streaming ? '스트리밍 모드에서는 전공 용어 힌트를 지원하지 않습니다' : $('glossary').placeholder; $('model').textContent = config.model; $('status').textContent = configured ? '시작할 준비가 됐어요' : '로컬 음성 모델 설치 필요'; $('notice').textContent = configured ? 'API 키 없이 이 컴퓨터에서 강의를 받아씁니다. 녹음 전 강의 정책과 동의를 확인하세요.' : qwen ? 'Qwen3-ASR 설치가 필요합니다. Apple Silicon Mac에서 npm run setup:qwen을 실행하고 서버를 다시 시작하세요.' : config.reason === 'platform' ? 'MLX는 Apple Silicon Mac과 ARM Python이 필요합니다. 다른 컴퓨터에서는 WHISPER_BACKEND=faster-whisper를 사용하세요.' : config.reason === 'model' ? streaming ? '스트리밍 모델 설치가 필요합니다: npm run setup:realtime. 설치 후 서버를 재시작하세요.' : '음성 모델 파일이 없습니다. README의 모델 다운로드 단계를 완료한 뒤 새로고침하세요. 샘플 강의는 바로 체험할 수 있습니다.' : '음성 엔진을 설치하세요. 실시간 모드: npm run setup:realtime. 샘플 강의는 바로 체험할 수 있습니다.'; }
 catch { error('서버에 연결할 수 없습니다. 새로고침해 주세요.'); $('status').textContent = '서버 연결 실패'; }
 controls();

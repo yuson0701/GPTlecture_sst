@@ -8,6 +8,7 @@ const files = new Map([['/', ['index.html', 'text/html']], ...['app.js', 'transc
 export function createApp({ env = process.env, fetcher = fetch, transcriber = new LocalTranscriber(env) } = {}) {
   const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
   let sttBusy = false, summaryBusy = false;
+  const qwen = (env.STT_BACKEND || env.WHISPER_BACKEND) === 'qwen-mlx';
   const streaming = (env.STT_BACKEND || env.WHISPER_BACKEND) === 'sherpa';
   const server = http.createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -18,7 +19,7 @@ export function createApp({ env = process.env, fetcher = fetch, transcriber = ne
       if (!/^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(host || '')) return json(res, 403, { error: 'Local access only.' });
       if (req.method === 'GET' && req.url === '/api/config') {
         let status; try { status = await transcriber.request('status'); } catch { status = { available: false }; }
-        return json(res, 200, { configured: status.available, reason: status.reason, streaming, model: streaming ? 'Korean Zipformer · 실시간 스트리밍' : (env.STT_BACKEND || env.WHISPER_BACKEND) === 'mlx' ? `MLX · Apple GPU · ${env.MLX_WHISPER_MODEL || 'whisper-turbo'}` : `faster-whisper · ${env.WHISPER_MODEL || 'large-v3-turbo'}`, summary: env.SUMMARY_MODE === 'extractive' ? 'extractive' : 'ollama', local: true });
+        return json(res, 200, { configured: status.available, reason: status.reason, streaming, backend: qwen ? 'qwen-mlx' : undefined, model: qwen ? `Qwen3-ASR · Apple GPU · ${env.QWEN_ASR_MODEL?.match(/Qwen3-ASR-(0\.6B|1\.7B)/)?.[1] || '1.7B'}` : streaming ? 'Korean Zipformer · 실시간 스트리밍' : (env.STT_BACKEND || env.WHISPER_BACKEND) === 'mlx' ? `MLX · Apple GPU · ${env.MLX_WHISPER_MODEL || 'whisper-turbo'}` : `faster-whisper · ${env.WHISPER_MODEL || 'large-v3-turbo'}`, summary: env.SUMMARY_MODE === 'extractive' ? 'extractive' : 'ollama', local: true });
       }
       if (['GET', 'HEAD'].includes(req.method) && files.has(req.url)) {
         const [file, mime] = files.get(req.url), content = await readFile(new URL(`./public/${file}`, import.meta.url));

@@ -176,3 +176,21 @@ test('malformed paragraph output falls back without fabricated cleanup', async (
   const result = await localSummary({ previous: '', transcript: '강의의 원문은 그대로 보관되어야 합니다.', block: true, paragraph: true }, { env: {}, fetcher: async () => Response.json({ message: { content: '{"title":"제목"}' } }) });
   assert.equal(result.method, 'extractive'); assert.equal(result.cleaned, undefined);
 });
+
+test('Qwen config advertises Apple GPU and does not select Zipformer packet mode', async t => {
+  const { base } = await serve(t, { env: { STT_BACKEND: 'qwen-mlx', QWEN_ASR_MODEL: '/cache/models--mlx-community--Qwen3-ASR-0.6B-8bit/snapshots/123' } });
+  const config = await (await fetch(base + '/api/config')).json();
+  assert.equal(config.backend, 'qwen-mlx'); assert.equal(config.streaming, false);
+  assert.match(config.model, /Qwen3-ASR.*Apple GPU/);
+});
+test('Qwen capture bounds context to six seconds and reduces preview frequency', () => {
+  const packets = [];
+  const segmenter = new Segmenter(16000, packet => packets.push(packet), { previewSeconds: 0.8, maxSeconds: 6 });
+  for (let i = 0; i < 150; i++) segmenter.push(new Float32Array(1600).fill(0.1));
+  segmenter.flush();
+  const finals = packets.filter(x => x.final);
+  assert.ok(finals.length >= 3);
+  assert.ok(packets.every(x => Buffer.from(x.audio, 'base64').length <= 16000 * 2 * 6.1));
+  assert.ok(packets.filter(x => !x.final).length < 25);
+  assert.equal(finals[1].overlap, true);
+});
