@@ -27,6 +27,7 @@ with sync_playwright() as p:
     expect(page.locator('#summarize')).to_be_enabled()
     # The first block must be created by the live 20-second timer.
     expect(page.locator('.summary-block[aria-busy="true"]')).to_have_count(1, timeout=25000)
+    page.locator('.summary-block details').first.evaluate('(el) => el.open = true')
     source = page.locator('.block-source').inner_text()
     assert source == calls[0]['transcript']
     page.wait_for_timeout(700)
@@ -50,6 +51,13 @@ with sync_playwright() as p:
     assert source in text and '첫 블록의 쉬운 설명입니다.' in text
     page.set_viewport_size({'width': 390, 'height': 844})
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    page.locator('#script-tab').click()
+    expect(page.locator('#transcript')).to_be_visible()
+    expect(page.locator('#notes-view')).to_be_hidden()
+    page.locator('#notes-tab').click()
+    expect(page.locator('#notes-view')).to_be_visible()
+    page.set_viewport_size({'width': 1440, 'height': 1000})
+    page.screenshot(path='/tmp/lecture-paragraphs.png', full_page=True)
     assert not errors, errors
     print('PASS: automatic block creation, visible source during processing, immutable blocks, isolated requests, retry, stop flush, export, mobile')
     browser.close()

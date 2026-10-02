@@ -53,7 +53,9 @@ Enter a lecture title, click **강의 시작**, then **종료** when finished. S
 
 ## Block-by-block notes
 
-Every 20 seconds, finalized speech is automatically grouped into a new block. Each card immediately shows the exact timestamped source being processed, followed by a simpler Korean paraphrase. Earlier blocks stay visible. Long backlogs are divided into smaller blocks; **지금 요약** creates the next block immediately, and stopping the lecture processes the remainder. Failed requests retry the same source block. Markdown export preserves every source/paraphrase pair.
+Every 20 seconds, finalized speech is automatically grouped into a new block. The document-style **대화 기록** view shows a short heading, Korean bullet notes, and a cleaned paragraph. The current speech appears beneath completed paragraphs. **스크립트** keeps the unmodified recognition text; each completed paragraph also has an expandable original-source section. Earlier blocks stay visible. Long backlogs are divided into smaller blocks; **지금 요약** creates the next block immediately, and stopping the lecture processes the remainder. Failed requests retry the same source block. Markdown export preserves every source/paraphrase pair.
+
+Korean paragraph cleanup adjusts spacing, punctuation and clear disfluencies; it is AI editing, not a second audio recognition pass. It cannot reliably fix misheard names or technical terms. The prompt forbids guessing unclear words, but model edits still require comparison with the original. No measured Korean recognition-accuracy improvement is claimed.
 
 Paraphrasing requires local [Ollama](https://ollama.com/). Install and launch Ollama, then download the default model once:
 

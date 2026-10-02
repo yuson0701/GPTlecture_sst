@@ -162,3 +162,17 @@ test('block fallback never mixes earlier notes into the current source', async (
   const result = await localSummary({ block: true, previous: '이전 블록의 내용은 포함되면 안 됩니다.', transcript: '현재 블록에 포함된 강의 원문입니다.' }, { env: {}, fetcher: async () => { throw Error('offline'); } });
   assert.equal(result.method, 'extractive'); assert.doesNotMatch(result.summary, /이전 블록/);
 });
+
+test('paragraph cleanup returns structured Korean notes and preserves source-only context', async () => {
+  const result = await localSummary({ previous: '', transcript: '기회 비용은 포기한 대안의 가치입니다.', block: true, paragraph: true }, { env: {}, fetcher: async (_, options) => {
+    const request = JSON.parse(options.body);
+    assert.equal(request.format, 'json');
+    assert.match(request.messages[0].content, /추측해서 고치지/);
+    return Response.json({ message: { content: JSON.stringify({ title: '기회비용의 의미', bullets: ['포기한 대안의 가치를 뜻합니다.'], cleaned: '기회비용은 포기한 대안의 가치입니다.' }) } });
+  } });
+  assert.equal(result.title, '기회비용의 의미'); assert.match(result.summary, /^• /); assert.equal(result.cleaned, '기회비용은 포기한 대안의 가치입니다.');
+});
+test('malformed paragraph output falls back without fabricated cleanup', async () => {
+  const result = await localSummary({ previous: '', transcript: '강의의 원문은 그대로 보관되어야 합니다.', block: true, paragraph: true }, { env: {}, fetcher: async () => Response.json({ message: { content: '{"title":"제목"}' } }) });
+  assert.equal(result.method, 'extractive'); assert.equal(result.cleaned, undefined);
+});

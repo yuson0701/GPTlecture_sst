@@ -46,6 +46,7 @@ with tempfile.TemporaryDirectory() as temp, sync_playwright() as p:
     page.route('**/api/transcribe', transcribe)
     page.route('**/api/summary', summarize)
     page.goto(base, wait_until='networkidle')
+    page.locator('#script-tab').click()
     page.locator('#start').click()
     expect(page.locator('#stop')).to_be_enabled()
     page.wait_for_timeout(1200)
