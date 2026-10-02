@@ -2,6 +2,24 @@
 
 Local Korean speech recognition and lecture notes, with no API key or cloud speech service.
 
+## Start page and saved lectures
+
+Branch: **feature/lecture-library**, based on the Qwen3-ASR branch. Existing speech-model settings are preserved.
+
+```sh
+git fetch origin
+git switch feature/lecture-library
+npm start
+```
+
+Refresh the browser to see **나의 강의 기록**. Click **새 강의 시작**, enter a title, then **녹음 시작**. Recent lectures show their title, last saved time, duration, and a transcript preview. Open any lecture to read its **대화 기록** and **스크립트**, rename it, finish pending summaries, or export Markdown. **새 강의** creates a separate record; archived lectures are not overwritten by a new recording. **샘플 보기** also saves a clearly labeled demo so you can test the library without installing a speech model.
+
+Transcripts (including marked drafts), source paragraphs, AI notes, title, and timing metadata are automatically saved about every two seconds and flushed when stopping or returning to the library. Watch **이 컴퓨터에 저장됨** before closing. Writes use atomic file replacement and revision checks; a failed or conflicting save stays visible with **저장 재시도**, and navigation is blocked until saved. A browser/server crash can lose changes since the last completed save. Interrupted summaries can be retried after reopening; microphone capture itself is not resumed.
+
+Records live in **`data/lectures/` inside the project folder**, one JSON file per lecture. They survive browser and server restarts. The directory is ignored by Git; pushing/switching branches does not upload the records. Back up this directory if moving computers or deleting/recloning the project. Advanced installations can set `LECTURE_DATA_DIR` to an absolute directory. The app stores text notes, **not audio recordings**; unprocessed audio cannot be recovered after closing the tab. Old notes from tabs closed before this feature cannot be recovered.
+
+Persistence QA: `CHROMIUM_BIN=/path/to/chromium python3 test/browser_library.py` runs an isolated server with temporary storage, saves records, restarts the server, reopens the notes, and tests failed-save recovery.
+
 ## New branch: Qwen3-ASR for Korean on Apple Silicon
 
 This branch adds **Qwen3-ASR-1.7B (8-bit), running on the Apple GPU through MLX Audio**, as an accuracy-oriented alternative to Korean Zipformer. It also offers **0.6B (8-bit)** for a smaller model. The existing `work` branch is unchanged.
@@ -99,7 +117,7 @@ npm start
 
 Use Chrome or Edge on the same computer as the server and allow microphone access. On Windows PowerShell, use `npm.cmd` if script execution policy blocks `npm`. Keep the terminal and browser tab open; prevent the computer from sleeping during the lecture.
 
-Enter a lecture title, click **강의 시작**, then **종료** when finished. Stop flushes remaining samples and processes pending results. Use **노트 내보내기** to download Markdown before closing or refreshing. There is no cloud history: notes and any pending audio are in tab memory. The scripted **샘플 강의 체험** demo remains available without installed models.
+Enter a lecture title, click **강의 시작**, then **종료** when finished. Stop flushes remaining samples and processes pending results. Use **노트 내보내기** to download Markdown before closing or refreshing. Notes are saved locally in the lecture library; pending audio remains only in tab memory. The scripted **샘플 강의 체험** demo remains available without installed models.
 
 ## Block-by-block notes
 
@@ -174,4 +192,4 @@ Optional browser checks require Playwright and Chromium. `test/browser_smoke.py`
 
 The server binds only to localhost, rejects cross-origin API calls, and processes speech locally. Initial package/model downloads require internet; lecture-time inference does not download weights. The model is from the official [sherpa-onnx Korean streaming release](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-korean-2024-06-16.tar.bz2). Training provenance is linked in the [upstream model documentation](https://github.com/k2-fsa/sherpa/blob/master/docs/source/onnx/pretrained_models/online-transducer/zipformer-transducer-models.rst).
 
-No system/tab audio capture, speaker diarization, permanent audio storage, or cross-device access is implemented. Microphone interruptions, sleep, and tab closure can interrupt a lecture; export notes before leaving. University recording rules and lecturer consent still apply.
+No system/tab audio capture, speaker diarization, permanent audio storage, or cross-device access is implemented. Microphone interruptions, sleep, and tab closure can interrupt a lecture; check the save indicator before leaving. University recording rules and lecturer consent still apply.

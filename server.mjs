@@ -2,11 +2,13 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { LocalTranscriber } from './local/transcriber.mjs';
+import { RecordStore } from './local/records.mjs';
 import { localSummary } from './local/summary.mjs';
 
 const files = new Map([['/', ['index.html', 'text/html']], ...['app.js', 'transcript.js', 'audio.js', 'capture-worklet.js', 'streaming.js'].map(file => ['/' + file, [file, 'text/javascript']]), ['/style.css', ['style.css', 'text/css']]]);
 export function createApp({ env = process.env, fetcher = fetch, transcriber = new LocalTranscriber(env) } = {}) {
   const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
+  const records = new RecordStore(env.LECTURE_DATA_DIR || fileURLToPath(new URL('./data/lectures', import.meta.url)));
   let sttBusy = false, summaryBusy = false;
   const qwen = (env.STT_BACKEND || env.WHISPER_BACKEND) === 'qwen-mlx';
   const streaming = (env.STT_BACKEND || env.WHISPER_BACKEND) === 'sherpa';
@@ -17,6 +19,12 @@ export function createApp({ env = process.env, fetcher = fetch, transcriber = ne
     try {
       const host = req.headers.host;
       if (!/^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(host || '')) return json(res, 403, { error: 'Local access only.' });
+      const recordRoute = req.url.match(/^\/api\/records\/([a-f0-9-]+)$/);
+      if (req.method === 'GET' && (req.url === '/api/records' || recordRoute)) {
+        if (req.headers.origin && ![`http://${host}`, `https://${host}`].includes(req.headers.origin)) return json(res, 403, { error: 'Origin rejected' });
+        try { return json(res, 200, recordRoute ? await records.get(recordRoute[1]) : { records: await records.list() }); }
+        catch (e) { return json(res, e.status || 500, { error: e.status ? e.message : '저장된 기록을 읽지 못했습니다.' }); }
+      }
       if (req.method === 'GET' && req.url === '/api/config') {
         let status; try { status = await transcriber.request('status'); } catch { status = { available: false }; }
         return json(res, 200, { configured: status.available, reason: status.reason, streaming, backend: qwen ? 'qwen-mlx' : undefined, model: qwen ? `Qwen3-ASR · Apple GPU · ${env.QWEN_ASR_MODEL?.match(/Qwen3-ASR-(0\.6B|1\.7B)/)?.[1] || '1.7B'}` : streaming ? 'Korean Zipformer · 실시간 스트리밍' : (env.STT_BACKEND || env.WHISPER_BACKEND) === 'mlx' ? `MLX · Apple GPU · ${env.MLX_WHISPER_MODEL || 'whisper-turbo'}` : `faster-whisper · ${env.WHISPER_MODEL || 'large-v3-turbo'}`, summary: env.SUMMARY_MODE === 'extractive' ? 'extractive' : 'ollama', local: true });
@@ -26,12 +34,16 @@ export function createApp({ env = process.env, fetcher = fetch, transcriber = ne
         res.writeHead(200, { 'Content-Type': `${mime}; charset=utf-8` });
         return res.end(req.method === 'HEAD' ? undefined : content);
       }
-      if (req.method !== 'POST' || !['/api/session', '/api/transcribe', '/api/summary'].includes(req.url)) return json(res, 404, { error: 'Not found' });
+      if (req.method !== 'POST' || !recordRoute && !['/api/session', '/api/transcribe', '/api/summary'].includes(req.url)) return json(res, 404, { error: 'Not found' });
       if (req.headers.origin !== `http://${host}` && req.headers.origin !== `https://${host}`) return json(res, 403, { error: 'Origin rejected' });
       if (!req.headers['content-type']?.startsWith('application/json')) return json(res, 415, { error: 'JSON required' });
-      let raw = ''; for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > 700000) return json(res, 413, { error: 'Request too large' }); }
+      let raw = ''; for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > (recordRoute ? 10000000 : 700000)) return json(res, 413, { error: 'Request too large' }); }
       let body; try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Invalid JSON' }); }
       if (!body || typeof body !== 'object') return json(res, 400, { error: 'Invalid request' });
+      if (recordRoute) {
+        try { return json(res, 200, await records.save(recordRoute[1], body)); }
+        catch (e) { return json(res, e.status || 500, { error: e.status ? e.message : '기록을 저장하지 못했습니다. 디스크 공간과 권한을 확인하세요.' }); }
+      }
       if (req.url === '/api/session' || req.url === '/api/transcribe') {
         if (typeof body.glossary !== 'string' || body.glossary.length > 1500) return json(res, 400, { error: '용어는 1,500자 이내로 입력해 주세요.' });
         if (req.url === '/api/transcribe') {

@@ -9,3 +9,5 @@ models/
 
 .venv-qwen/
 .env.before-qwen
+
+data/

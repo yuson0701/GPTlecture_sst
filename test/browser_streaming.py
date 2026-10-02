@@ -21,6 +21,7 @@ with sync_playwright() as p:
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(base, wait_until='networkidle')
     expect(page.locator('#model')).to_contain_text('Zipformer')
+    page.locator('#new-lecture').click()
     page.locator('#script-tab').click()
     page.locator('#start').click()
     expect(page.locator('#stop')).to_be_enabled(timeout=30000)

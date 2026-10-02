@@ -23,6 +23,7 @@ with sync_playwright() as p:
     page.route('**/api/transcribe', transcribe)
     page.route('**/api/summary', summary)
     page.goto(sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:3010')
+    page.locator('#new-lecture').click()
     page.locator('#start').click()
     expect(page.locator('#summarize')).to_be_enabled()
     # The first block must be created by the live 20-second timer.

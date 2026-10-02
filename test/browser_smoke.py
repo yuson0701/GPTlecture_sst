@@ -46,6 +46,7 @@ with tempfile.TemporaryDirectory() as temp, sync_playwright() as p:
     page.route('**/api/transcribe', transcribe)
     page.route('**/api/summary', summarize)
     page.goto(base, wait_until='networkidle')
+    page.locator('#new-lecture').click()
     page.locator('#script-tab').click()
     page.locator('#start').click()
     expect(page.locator('#stop')).to_be_enabled()
@@ -73,6 +74,7 @@ with tempfile.TemporaryDirectory() as temp, sync_playwright() as p:
     # Ensure final audio survives failure even when provisional text already exists.
     fail_final = True
     start_index = len(requests)
+    page.locator('#new-from-note').click()
     page.locator('#start').click()
     expect(page.locator('#retry')).to_be_visible(timeout=15000)
     expect(page.locator('.segment.pending')).to_have_count(1)
