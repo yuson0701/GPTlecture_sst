@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.mjs';
-import { extractiveSummary, localSummary } from '../local/summary.mjs';
 import { AudioQueue, Segmenter, pcmBase64, removeOverlap } from '../public/audio.js';
 import { Transcript } from '../public/transcript.js';
 
@@ -19,7 +18,7 @@ test('serves no-key demo and advertises local-only model configuration', async t
   assert.equal((await fetch(base)).status, 200);
   assert.equal((await fetch(base + '/.env')).status, 404);
   const config = await (await fetch(base + '/api/config')).json();
-  assert.equal(config.configured, false); assert.equal(config.local, true); assert.match(config.model, /faster-whisper/);
+  assert.equal(config.configured, false); assert.equal(config.local, true); assert.equal(config.summaryLocal, false); assert.equal(config.summary, 'chatgpt'); assert.match(config.model, /faster-whisper/);
   const page = await fetch(base); assert.match(page.headers.get('content-security-policy'), /connect-src 'self';/);
   assert.doesNotMatch(await page.text(), /api\.openai\.com|OPENAI_API_KEY/);
 });
@@ -40,28 +39,6 @@ test('loads local model then sends PCM and glossary to the local worker', async 
 test('worker setup failure is actionable and does not return fake transcription', async t => {
   const { post } = await serve(t, { transcriber: { request: async () => { throw Error('모델 설치 필요'); }, close() {} } });
   const response = await post('/api/session', { glossary: '' }); assert.equal(response.status, 503); assert.deepEqual(await response.json(), { error: '모델 설치 필요' });
-});
-test('Ollama receives rolling context at loopback only, without any API credentials', async t => {
-  const { post } = await serve(t, { fetcher: async (url, options) => {
-    assert.equal(url, 'http://127.0.0.1:11434/api/chat'); assert.equal(options.headers.Authorization, undefined);
-    const body = JSON.parse(options.body); assert.equal(body.model, 'qwen2.5:7b'); assert.equal(body.stream, false);
-    assert.deepEqual(JSON.parse(body.messages[1].content), { previous_summary: '이전 요약', new_transcript: '새 강의' });
-    return Response.json({ message: { content: '누적 요약' } });
-  } });
-  const result = await (await post('/api/summary', { transcript: '새 강의', previous: '이전 요약' })).json(); assert.equal(result.summary, '누적 요약'); assert.equal(result.method, 'ollama');
-});
-test('missing Ollama produces explicitly labeled extractive notes', async () => {
-  const text = '기회비용은 포기한 최선의 대안의 가치입니다. 매몰비용은 이미 지출한 비용입니다.';
-  const result = await localSummary({ previous: '', transcript: text }, { env: {}, fetcher: async () => { throw Error('not running'); } });
-  assert.equal(result.method, 'extractive'); assert.match(result.warning, /Ollama/); assert.match(result.summary, /기회비용/);
-  assert.ok(result.summary.split('\n').every(line => text.includes(line.replace(/^• /, ''))));
-});
-test('extractive mode never calls a model; cloud model tags are blocked', async () => {
-  const fetcher = () => { throw Error('must not be called'); };
-  const input = { previous: '', transcript: '이것은 네트워크를 사용하지 않는 강의 요약 테스트입니다.' };
-  assert.equal((await localSummary(input, { env: { SUMMARY_MODE: 'extractive' }, fetcher })).method, 'extractive');
-  assert.equal((await localSummary(input, { env: { OLLAMA_MODEL: 'qwen3:cloud' }, fetcher })).method, 'extractive');
-  assert.ok(extractiveSummary('', input.transcript).length);
 });
 test('PCM encoding downsamples 48 kHz to 16 kHz signed little endian', () => {
   const encoded = pcmBase64(new Float32Array(48000).fill(0.5), 48000); const bytes = Buffer.from(encoded, 'base64');
@@ -143,38 +120,6 @@ test('full queue skips previews but retains final audio for retry', async () => 
   assert.equal(queue.enqueue({ id: 'preview', final: false }), true);
   assert.equal(queue.enqueue({ id: 'third', final: true }), false);
   assert.equal(queue.items.length, 2); release(); await queue.settle(); assert.deepEqual(seen, ['first', 'second']);
-});
-
-test('block paraphrases ignore earlier notes and use local Ollama even after streaming setup', async t => {
-  const { post } = await serve(t, { env: { STT_BACKEND: 'sherpa', LECTURE_SUMMARY_MODE: 'extractive' }, fetcher: async (url, options) => {
-    assert.equal(url, 'http://127.0.0.1:11434/api/chat');
-    const body = JSON.parse(options.body);
-    assert.equal(body.model, 'qwen2.5:3b');
-    assert.deepEqual(JSON.parse(body.messages[1].content), { previous_summary: '', new_transcript: '이 블록의 강의 원문' });
-    assert.match(body.messages[0].content, /블록만/);
-    return Response.json({ message: { content: '이 블록을 쉽게 풀어쓴 내용' } });
-  } });
-  const result = await (await post('/api/summary', { block: true, live: true, previous: '이전 블록은 넣지 마세요', transcript: '이 블록의 강의 원문' })).json();
-  assert.equal(result.method, 'ollama');
-  assert.equal(result.summary, '이 블록을 쉽게 풀어쓴 내용');
-});
-test('block fallback never mixes earlier notes into the current source', async () => {
-  const result = await localSummary({ block: true, previous: '이전 블록의 내용은 포함되면 안 됩니다.', transcript: '현재 블록에 포함된 강의 원문입니다.' }, { env: {}, fetcher: async () => { throw Error('offline'); } });
-  assert.equal(result.method, 'extractive'); assert.doesNotMatch(result.summary, /이전 블록/);
-});
-
-test('paragraph cleanup returns structured Korean notes and preserves source-only context', async () => {
-  const result = await localSummary({ previous: '', transcript: '기회 비용은 포기한 대안의 가치입니다.', block: true, paragraph: true }, { env: {}, fetcher: async (_, options) => {
-    const request = JSON.parse(options.body);
-    assert.equal(request.format, 'json');
-    assert.match(request.messages[0].content, /추측해서 고치지/);
-    return Response.json({ message: { content: JSON.stringify({ title: '기회비용의 의미', bullets: ['포기한 대안의 가치를 뜻합니다.'], cleaned: '기회비용은 포기한 대안의 가치입니다.' }) } });
-  } });
-  assert.equal(result.title, '기회비용의 의미'); assert.match(result.summary, /^• /); assert.equal(result.cleaned, '기회비용은 포기한 대안의 가치입니다.');
-});
-test('malformed paragraph output falls back without fabricated cleanup', async () => {
-  const result = await localSummary({ previous: '', transcript: '강의의 원문은 그대로 보관되어야 합니다.', block: true, paragraph: true }, { env: {}, fetcher: async () => Response.json({ message: { content: '{"title":"제목"}' } }) });
-  assert.equal(result.method, 'extractive'); assert.equal(result.cleaned, undefined);
 });
 
 test('Qwen config advertises Apple GPU and does not select Zipformer packet mode', async t => {

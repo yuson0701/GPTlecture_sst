@@ -6,11 +6,22 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server.mjs",
     "test": "node --test",
-    "check": "node --check server.mjs && node --check local/transcriber.mjs && node --check local/summary.mjs && node --check public/app.js && node --check public/audio.js && node --check public/capture-worklet.js && node --check public/transcript.js && node --check public/streaming.js && node --check scripts/setup-realtime.mjs && node --check scripts/setup-qwen.mjs && node --check local/records.mjs",
+    "check": "node --check server.mjs && node --check local/transcriber.mjs && node --check local/summary.mjs && node --check public/app.js && node --check public/audio.js && node --check public/capture-worklet.js && node --check public/transcript.js && node --check public/streaming.js && node --check scripts/setup-realtime.mjs && node --check scripts/setup-qwen.mjs && node --check local/records.mjs && node --check local/chatgpt.mjs && node --check local/credential-encryption.mjs && node --check public/chatgpt.js",
     "setup:realtime": "node scripts/setup-realtime.mjs",
-    "setup:qwen": "node scripts/setup-qwen.mjs"
+    "setup:qwen": "node scripts/setup-qwen.mjs",
+    "prepare": "tsc -p vendor/siwc-local/tsconfig.json"
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "@napi-rs/keyring": "2.1.0",
+    "jose": "6.2.3",
+    "proper-lockfile": "4.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/proper-lockfile": "4.1.4",
+    "typescript": "5.9.3"
   }
 }

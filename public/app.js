@@ -1,3 +1,4 @@
+import { initChatGPT, summaryOptions, summaryReady, pauseChatGPT } from './chatgpt.js';
 import { Transcript, timestamp } from './transcript.js';
 import { Microphone, AudioQueue, removeOverlap, Segmenter } from './audio.js';
 import { StreamingFrames, StreamingQueue } from './streaming.js';
@@ -102,7 +103,7 @@ function controls() {
   $('retry').hidden = !queue?.failed || mode !== 'idle';
   $('title').disabled = active; $('glossary').disabled = active || streaming;
   $('export').disabled = !transcript.items.size;
-  $('summarize').disabled = summarizing || mode === 'demo' || !pendingSummary().length;
+  $('summarize').disabled = !summaryReady() || summarizing || mode === 'demo' || !pendingSummary().length;
   $('indicator').className = ['live', 'demo'].includes(mode) ? 'live' : '';
 }
 async function api(path, data) {
@@ -159,7 +160,7 @@ function renderStreaming(events) {
   $('count').textContent = `${finalRows}개 구간 · 실시간 스트리밍`;
   if (events.length) controls();
 }
-const summaryLabels = { ollama: '문단 요약 · AI가 정리한 내용', extractive: '핵심 문장 추출 · 바꿔쓰기 아님', demo: '쉽게 풀어쓴 내용 · 샘플' };
+const summaryLabels = { chatgpt: 'ChatGPT · 문단별 요점과 바꿔쓰기', ollama: '문단 요약 · AI가 정리한 내용', extractive: '핵심 문장 추출 · 바꿔쓰기 아님', demo: '쉽게 풀어쓴 내용 · 샘플' };
 function renderSummary(block) {
   changed();
   const target = $('summary'), atBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 100;
@@ -198,7 +199,7 @@ function pendingSummary() {
   }).filter(item => !summarized.has(item.id));
 }
 async function summarize() {
-  if (summarizing || mode === 'demo') return false;
+  if (summarizing || mode === 'demo' || !summaryReady()) return false;
   let block = summaryBlocks.find(item => item.state === 'failed');
   if (!block) {
     const batch = []; let length = 0;
@@ -213,12 +214,12 @@ async function summarize() {
   block.state = 'pending'; block.warning = ''; renderSummary(block);
   summarizing = true; controls(); $('summary-status').textContent = `블록 ${block.id} · 원문을 다듬고 요점을 정리하는 중…`;
   try {
-    const result = await api('/api/summary', { previous: '', block: true, paragraph: true, live: mode === 'live' || mode === 'stopping', transcript: block.source });
+    const result = await api('/api/summary', { previous: '', block: true, paragraph: true, live: mode === 'live' || mode === 'stopping', transcript: block.source, ...summaryOptions() });
     block.title = result.title; block.cleaned = result.cleaned; block.text = result.summary; block.method = result.method; block.warning = result.warning || ''; block.state = 'done';
     block.items.forEach(x => summarized.add(x.id)); renderSummary(block);
     $('summary-status').textContent = `블록 ${block.id} 완료 · ${summaryLabels[result.method]}`;
     return true;
-  } catch (e) { block.state = 'failed'; block.warning = e.message; renderSummary(block); $('summary-status').textContent = '블록 처리 실패 · 지금 요약으로 다시 시도'; return false; }
+  } catch (e) { pauseChatGPT(e.message); block.state = 'failed'; block.warning = e.message; renderSummary(block); $('summary-status').textContent = '블록 처리 실패 · 지금 요약으로 다시 시도'; return false; }
   finally { summarizing = false; controls(); }
 }
 
@@ -331,6 +332,7 @@ async function runAction(action) {
 for (const id of ['start', 'stop', 'new-lecture', 'new-from-note', 'home', 'demo', 'retry']) {
   const action = $(id).onclick; $(id).onclick = () => void runAction(action);
 }
+initChatGPT(controls);
 try { const response = await fetch('/api/config'); const config = await response.json(); configured = config.configured; streaming = Boolean(config.streaming); qwen = config.backend === 'qwen-mlx'; $('glossary').placeholder = streaming ? '스트리밍 모드에서는 전공 용어 힌트를 지원하지 않습니다' : $('glossary').placeholder; $('model').textContent = config.model; $('status').textContent = configured ? '시작할 준비가 됐어요' : '로컬 음성 모델 설치 필요'; $('notice').textContent = configured ? 'API 키 없이 이 컴퓨터에서 강의를 받아씁니다. 녹음 전 강의 정책과 동의를 확인하세요.' : qwen ? 'Qwen3-ASR 설치가 필요합니다. Apple Silicon Mac에서 npm run setup:qwen을 실행하고 서버를 다시 시작하세요.' : config.reason === 'platform' ? 'MLX는 Apple Silicon Mac과 ARM Python이 필요합니다. 다른 컴퓨터에서는 WHISPER_BACKEND=faster-whisper를 사용하세요.' : config.reason === 'model' ? streaming ? '스트리밍 모델 설치가 필요합니다: npm run setup:realtime. 설치 후 서버를 재시작하세요.' : '음성 모델 파일이 없습니다. README의 모델 다운로드 단계를 완료한 뒤 새로고침하세요. 샘플 강의는 바로 체험할 수 있습니다.' : '음성 엔진을 설치하세요. 실시간 모드: npm run setup:realtime. 샘플 강의는 바로 체험할 수 있습니다.'; }
 catch { error('서버에 연결할 수 없습니다. 새로고침해 주세요.'); $('status').textContent = '서버 연결 실패'; }
 controls();

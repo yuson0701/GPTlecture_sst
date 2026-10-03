@@ -4,11 +4,12 @@ Local Korean speech recognition and lecture notes, with no API key or cloud spee
 
 ## Start page and saved lectures
 
-Branch: **feature/lecture-library**, based on the Qwen3-ASR branch. Existing speech-model settings are preserved.
+Branch: **feature/chatgpt-paraphrases**, based on the saved-lecture branch. Existing speech-model settings are preserved.
 
 ```sh
 git fetch origin
-git switch feature/lecture-library
+git switch feature/chatgpt-paraphrases
+npm ci
 npm start
 ```
 
@@ -28,7 +29,7 @@ Stop the app with Ctrl+C, then run:
 
 ```sh
 git fetch origin
-git switch feature/lecture-library
+git switch feature/chatgpt-paraphrases
 npm run setup:qwen
 npm start
 ```
@@ -63,7 +64,7 @@ Sources reviewed: [Qwen3-ASR repository and evaluation](https://github.com/QwenL
 
 This implementation uses rolling audio windows, **not persistent Zipformer-style encoder state**. It requests drafts after approximately 0.8 seconds of speech, updates them as new audio arrives, and finalizes on a pause or after about 6 seconds. Old queued drafts are replaced, final audio is retained, and a sustained final-audio backlog stops capture visibly. Silero VAD rejects silent windows. Course vocabulary is sent through Qwen's native hotword prompt, including retries. Fine-tuned inference uses the evaluated bounded retry policy for repetition/token limits and reports an error if recovery fails. The timing shown is request duration, not total spoken-word latency.
 
-On one reserved lecture, the adapter reduced normalized character error rate from **43.18% to 21.02%** with the same fixed retry policy (raw fine-tuned CER: **30.20%**). These scores use source paragraph clips and supplied transcripts, not the app's shorter rolling windows; they do not establish live lecture accuracy or latency. **0–3 seconds remains a target.** A full-hour thermal test has not been completed. Earlier Zipformer performance numbers below do not apply to Qwen. Ollama paragraph cleanup is separate from speech recognition and may compete for GPU/memory while recording.
+On one reserved lecture, the adapter reduced normalized character error rate from **43.18% to 21.02%** with the same fixed retry policy (raw fine-tuned CER: **30.20%**). These scores use source paragraph clips and supplied transcripts, not the app's shorter rolling windows; they do not establish live lecture accuracy or latency. **0–3 seconds remains a target.** A full-hour thermal test has not been completed. Earlier Zipformer performance numbers below do not apply to Qwen. ChatGPT paragraph cleanup is separate from speech recognition and requires internet; this branch does not load a local summary model.
 
 For a reproducible check on your own Korean recording (16 kHz mono PCM16 WAV):
 
@@ -102,7 +103,7 @@ The recommended mode now uses [sherpa-onnx's Korean streaming Zipformer](https:/
 - Keeps at most one request in flight; packets have sequence numbers and retries cannot decode the same audio twice.
 - Uses two CPU threads. Consumed feature frames are discarded; endpoint resets retain unread lookahead rather than dropping audio at sentence boundaries.
 - Updates only changed transcript rows. Earlier lecture text stays in memory for scrolling and export without rebuilding the entire page on every word.
-- Shows each summary block alongside its source; local Ollama paraphrases one block at a time.
+- Shows each summary block alongside its source; ChatGPT paraphrases one source block at a time after you enable text sharing.
 
 The timing display reports the **latest packet's inference time and capture-to-response delay**. It is a diagnostic, not a measurement of when each spoken word became recognizable: model lookahead and linguistic context add latency. If ten packets (about two seconds of audio) accumulate, recording stops visibly and drains already-received audio instead of quietly slipping 10–20 seconds behind. A hard queue overflow is explicitly marked; audio is never silently skipped to make the display look faster.
 
@@ -129,15 +130,27 @@ Every 20 seconds, finalized speech is automatically grouped into a new block. Th
 
 Korean paragraph cleanup adjusts spacing, punctuation and clear disfluencies; it is AI editing, not a second audio recognition pass. It cannot reliably fix misheard names or technical terms. The prompt forbids guessing unclear words, but model edits still require comparison with the original. No measured Korean recognition-accuracy improvement is claimed.
 
-Paraphrasing requires local [Ollama](https://ollama.com/). Install and launch Ollama, then download the default model once:
+### ChatGPT subscription sign-in (no Ollama)
 
-```sh
-ollama pull qwen2.5:3b
-```
+This branch uses the [official OpenAI Sign in with ChatGPT DevKit](https://github.com/openai/sign-in-with-chatgpt-devkit), with browser authorization, subscription permission, model discovery and text Responses. It does not automate or read the ChatGPT desktop app, use its cookies, or require an OpenAI API key. Your existing fine-tuned Qwen STT settings and saved lectures are preserved. Old `OLLAMA_MODEL`, `SUMMARY_MODE` and `LECTURE_SUMMARY_MODE` settings are ignored; no requests are made to Ollama.
 
-No OpenAI API or other cloud service is used. Block requests use Ollama even if the earlier streaming setup selected extractive summaries. An existing `OLLAMA_MODEL` setting takes precedence; otherwise blocks use `qwen2.5:3b`. If Ollama/model loading fails, that block shows **핵심 문장 추출 · 바꿔쓰기 아님** with a setup message. Extracted sentences are not presented as paraphrases.
+On your Mac, run `npm ci` once after switching branches, then `npm start` and open http://localhost:3000. Node.js 22+ is required. Installation builds the pinned official SDK sources. In the ChatGPT panel:
 
-Each request contains only its own source block, never a cumulative summary. Paraphrasing runs separately from transcription, with one summary request at a time and a two-thread CPU setting. Local model inference still consumes compute and memory and may affect STT latency on a fanless Mac. Only finalized speech is included; provisional words stay in the transcript until finalized.
+1. Click **Sign in with ChatGPT** and complete the browser authorization. macOS may ask for Keychain access.
+2. Allow subscription usage if your account is eligible. If permission is missing, click **구독 사용 허용 / 다시 연결** to explicitly request it again.
+3. Choose a model from your account's returned catalog. The app does not guess which models your subscription supports.
+4. Check **강의 텍스트 전송 · 자동 정리 허용**. This choice resets when you reload, change models, disconnect, or a request fails.
+5. Start a lecture or open a saved record and click **지금 정리**. **사용량 관리** opens ChatGPT's usage controls; **연결 해제** removes this app's saved credentials and attempts remote revocation.
+
+Each request sends only its current finalized transcript block and Korean editing instructions. Microphone audio, other lectures, prior blocks and the glossary are not sent. The SDK requests `store: false`; this is not a claim of zero retention under the service's policies. Summarizing needs internet and consumes eligible ChatGPT plan usage. Subscription eligibility, region, model access and usage limits are enforced by OpenAI; a paid plan alone does not establish access. Requests may be refused until the account/app is enabled.
+
+One request runs at a time, separate from STT. On errors, incomplete/malformed results, or exhausted usage, no replacement summary is fabricated: the original block remains saved, automatic requests pause, and local transcription continues. Re-enable text sharing and click **지금 정리** to retry that same block. Disconnecting cancels in-flight SDK requests. Unchecking sharing stops new requests; already submitted requests can finish. No automatic retries consume extra plan usage after an error.
+
+Credentials are encrypted with AES-256-GCM using a key stored through macOS Keychain; encrypted SDK state lives in `~/Library/Application Support/Lecture Note/chatgpt`, outside the repository. Tokens are never sent to browser JavaScript or saved in lecture records. This branch's credential provider supports macOS; other systems can still view records/demo and use their existing local STT. Loss/denial of Keychain access fails closed; it does not overwrite unreadable credentials. This is a local browser app; do not expose its localhost server through a public proxy.
+
+The DevKit is vendored from revision `f723814abdccec135b519c451fb6e1992ee5e933`, with unchanged SDK sources and its [noncommercial license](vendor/siwc-local/LICENSE). The license permits personal noncommercial use/development; commercial distribution requires separate permission. This branch does not include the deferred Electron packaging work.
+
+Validation uses synthetic credentials and mocked ChatGPT responses. Live OAuth, your account's eligibility and macOS Keychain prompts still need an on-device check; Linux CI cannot verify them. Browser block QA: `CHROMIUM_BIN=/path/to/chromium python3 test/browser_blocks.py http://localhost:3000`.
 
 ## Existing Whisper modes
 
@@ -450,6 +463,6 @@ punctuation and spacing changes.
 
 ## Privacy and limitations
 
-The server binds only to localhost, rejects cross-origin API calls, and processes speech locally. Initial package/model downloads require internet; lecture-time inference does not download weights. The model is from the official [sherpa-onnx Korean streaming release](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-korean-2024-06-16.tar.bz2). Training provenance is linked in the [upstream model documentation](https://github.com/k2-fsa/sherpa/blob/master/docs/source/onnx/pretrained_models/online-transducer/zipformer-transducer-models.rst).
+The server binds only to localhost, rejects cross-origin API calls, and processes speech locally. Initial package/model downloads require internet; local STT does not download weights during a lecture. Optional ChatGPT paraphrasing sends transcript text to OpenAI over the internet after consent. The legacy Zipformer model is from the official [sherpa-onnx Korean streaming release](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-korean-2024-06-16.tar.bz2). Training provenance is linked in the [upstream model documentation](https://github.com/k2-fsa/sherpa/blob/master/docs/source/onnx/pretrained_models/online-transducer/zipformer-transducer-models.rst).
 
 No system/tab audio capture, speaker diarization, permanent audio storage, or cross-device access is implemented. Microphone interruptions, sleep, and tab closure can interrupt a lecture; check the save indicator before leaving. University recording rules and lecturer consent still apply.

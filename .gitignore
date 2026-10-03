@@ -17,3 +17,6 @@ voiceinput_output/
 datasets/
 checkpoints/
 qwen3-asr-finetuning-out/
+
+# Generated official ChatGPT SDK
+vendor/siwc-local/dist/

@@ -15,7 +15,7 @@ export function validateRecord(value) {
   // Copy only the record fields; audio and client timestamps are never stored.
   return { title: value.title, glossary: value.glossary, elapsed: value.elapsed, state: value.state, transcript: value.transcript.map(x => ({ id: x.id, text: x.text, seconds: x.seconds, final: x.final, failed: x.failed === true })),
     blocks: value.blocks.map(x => ({ id: x.id, source: x.source, state: x.state,
-      method: ['ollama', 'extractive', 'demo'].includes(x.method) ? x.method : undefined,
+      method: ['chatgpt', 'ollama', 'extractive', 'demo'].includes(x.method) ? x.method : undefined,
       title: x.title, text: x.text, cleaned: x.cleaned, warning: x.warning,
       items: x.items.map(i => ({ id: i.id, seconds: i.seconds, text: i.text })) })), summarized: [...value.summarized] };
 }

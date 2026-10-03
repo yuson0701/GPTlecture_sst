@@ -27,9 +27,9 @@ test('stream queue never coalesces incremental packets and retries at the same s
   await queue.settle(); assert.deepEqual(seen, [0]); assert.deepEqual(queue.items.map(x => x.sequence), [1, 2, 3]);
   fail = false; await queue.retry(); assert.deepEqual(seen, [0, 1, 2, 3]);
 });
-test('streaming routes pass sequence/session; live summaries do not invoke Ollama by default', async t => {
+test('streaming routes pass sequence/session; live summaries require explicit cloud consent', async t => {
   const calls = [];
-  const server = createApp({ env: { STT_BACKEND: 'sherpa' }, transcriber: { request: async (action, data) => { calls.push({ action, data }); return action === 'status' ? { available: true } : { events: [] }; }, close() {} }, fetcher: () => { throw Error('Live summaries must not compete with ASR'); } });
+  const server = createApp({ env: { STT_BACKEND: 'sherpa' }, transcriber: { request: async (action, data) => { calls.push({ action, data }); return action === 'status' ? { available: true } : { events: [] }; }, close() {} } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -39,5 +39,5 @@ test('streaming routes pass sequence/session; live summaries do not invoke Ollam
   assert.equal(response.status, 200); assert.equal(calls.at(-1).data.session, 'test'); assert.equal(calls.at(-1).data.sequence, 0);
   assert.equal((await post('/api/transcribe', { audio: '', final: true, session: 'test', sequence: -1, glossary: '' })).status, 400);
   const summary = await (await post('/api/summary', { transcript: '기회비용은 포기한 최선의 대안의 가치입니다.', previous: '', live: true })).json();
-  assert.equal(summary.method, 'extractive');
+  assert.equal(summary.code, 'consent_required'); assert.equal(summary.summary, undefined);
 });

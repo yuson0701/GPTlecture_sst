@@ -1,4 +1,4 @@
-"""Block lifecycle QA with mocked ASR/Ollama and real browser capture."""
+"""Block lifecycle QA with mocked ASR/ChatGPT and real browser capture."""
 import os
 import sys
 from playwright.sync_api import sync_playwright, expect
@@ -8,6 +8,8 @@ with sync_playwright() as p:
     errors, calls, held = [], [], []
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.route('**/api/config', lambda r: r.fulfill(json={'configured': True, 'streaming': True, 'model': 'Test'}))
+    page.route('**/api/chatgpt/status', lambda r: r.fulfill(json={'status': 'connected', 'sharing': True, 'identity': {'email': 'test@example.com'}}))
+    page.route('**/api/chatgpt/models', lambda r: r.fulfill(json={'models': [{'slug': 'test-model', 'displayName': 'Test model'}]}))
     page.route('**/api/session', lambda r: r.fulfill(json={'session': 'test'}))
     def transcribe(r):
         n = r.request.post_data_json['sequence']
@@ -19,10 +21,13 @@ with sync_playwright() as p:
         elif len(calls) == 2:
             r.fulfill(status=503, json={'error': 'Retry test'})
         else:
-            r.fulfill(json={'summary': '현재 블록의 쉬운 설명입니다.', 'method': 'ollama'})
+            r.fulfill(json={'summary': '현재 블록의 쉬운 설명입니다.', 'method': 'chatgpt'})
     page.route('**/api/transcribe', transcribe)
     page.route('**/api/summary', summary)
     page.goto(sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:3010')
+    page.locator('#chatgpt-model').select_option('test-model')
+    assert not page.locator('#chatgpt-consent').is_checked()
+    page.locator('#chatgpt-consent').check()
     page.locator('#new-lecture').click()
     page.locator('#start').click()
     expect(page.locator('#summarize')).to_be_enabled()
@@ -33,11 +38,14 @@ with sync_playwright() as p:
     assert source == calls[0]['transcript']
     page.wait_for_timeout(700)
     assert page.locator('.block-source').inner_text() == source
-    held[0].fulfill(json={'summary': '첫 블록의 쉬운 설명입니다.', 'method': 'ollama'})
+    held[0].fulfill(json={'summary': '첫 블록의 쉬운 설명입니다.', 'method': 'chatgpt'})
     expect(page.locator('.summary-copy')).to_have_text('첫 블록의 쉬운 설명입니다.')
     page.locator('#summarize').click()
     expect(page.locator('.summary-block')).to_have_count(2)
     expect(page.locator('.block-status').nth(1)).to_contain_text('처리 실패')
+    assert not page.locator('#chatgpt-consent').is_checked()
+    assert page.locator('#summarize').is_disabled()
+    page.locator('#chatgpt-consent').check()
     page.locator('#summarize').click()
     expect(page.locator('.summary-copy').nth(1)).to_have_text('현재 블록의 쉬운 설명입니다.')
     assert calls[1] == calls[2], 'Retry must retain exactly the original block'

@@ -1,0 +1,5 @@
+Official OpenAI Sign in with ChatGPT DevKit, packages/local/src, copied unchanged from https://github.com/openai/sign-in-with-chatgpt-devkit/tree/f723814abdccec135b519c451fb6e1992ee5e933 .
+
+SDK sources are unmodified. The local tsconfig compiles them during npm ci (prepare). The SDK is not published on npm; the pinned source is included for reproducible installation. LICENSE and upstream THIRD_PARTY_NOTICES.md are preserved. The latter covers the full upstream example distribution; this app uses only the local SDK, jose and proper-lockfile.
+
+The DevKit license permits noncommercial personal learning and development; it grants no commercial-use rights. Independent application code is separate from the SDK.

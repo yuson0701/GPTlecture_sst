@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { RecordStore } from '../local/records.mjs';
 import { createApp } from '../server.mjs';
-const record = () => ({ revision: 0, title: '경제학 강의', glossary: '기회비용', elapsed: 3600, state: 'idle', transcript: [{ id: 'one', seconds: 0, final: true, text: '기회비용을 배웁니다.' }], blocks: [{ id: 1, source: '기회비용을 배웁니다.', items: [{ id: 'one:0', seconds: 0, text: '기회비용을 배웁니다.' }], state: 'done', method: 'ollama', text: '선택의 비용을 설명합니다.', cleaned: '기회비용을 배웁니다.' }], summarized: ['one:0'] });
+const record = () => ({ revision: 0, title: '경제학 강의', glossary: '기회비용', elapsed: 3600, state: 'idle', transcript: [{ id: 'one', seconds: 0, final: true, text: '기회비용을 배웁니다.' }], blocks: [{ id: 1, source: '기회비용을 배웁니다.', items: [{ id: 'one:0', seconds: 0, text: '기회비용을 배웁니다.' }], state: 'done', method: 'chatgpt', text: '선택의 비용을 설명합니다.', cleaned: '기회비용을 배웁니다.' }], summarized: ['one:0'] });
 async function directory(t) { const path = await mkdtemp(join(tmpdir(), 'lecture-records-')); t.after(() => rm(path, { recursive: true, force: true })); return path; }
 test('records survive a new store instance with all source/summary pairs', async t => {
   const dir = await directory(t), id = randomUUID();
