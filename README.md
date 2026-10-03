@@ -126,15 +126,21 @@ Enter a lecture title, click **강의 시작**, then **종료** when finished. S
 
 ## Block-by-block notes
 
-Every 20 seconds, finalized speech is automatically grouped into a new block. The document-style **대화 기록** view shows a short heading, Korean bullet notes, and a cleaned paragraph. The current speech appears beneath completed paragraphs. **스크립트** keeps the unmodified recognition text; each completed paragraph also has an expandable original-source section. Earlier blocks stay visible. Long backlogs are divided into smaller blocks; **지금 요약** creates the next block immediately, and stopping the lecture processes the remainder. Failed requests retry the same source block. Markdown export preserves every source/paraphrase pair.
+Every **75 seconds (1 minute 15 seconds)** from recording start or the last summary request, finalized speech is grouped into a new block. The **요약** view is a single reading document with bold topic headings and explanatory Korean bullet sentences, matching the supplied reference layout. Each block can contain 1–5 topics; the model is instructed to preserve facts and avoid repetitive headings. The current speech appears beneath completed paragraphs. **스크립트** keeps the unmodified recognition text; each completed paragraph also has an expandable original-source section. Earlier blocks stay visible. Long backlogs are divided into smaller blocks; **지금 정리** creates the next block immediately, and stopping the lecture processes the remainder. Failed requests retry the same source block. Markdown export preserves every source/paraphrase pair.
 
-Korean paragraph cleanup adjusts spacing, punctuation and clear disfluencies; it is AI editing, not a second audio recognition pass. It cannot reliably fix misheard names or technical terms. The prompt forbids guessing unclear words, but model edits still require comparison with the original. No measured Korean recognition-accuracy improvement is claimed.
+Korean paraphrasing adjusts spacing, punctuation and clear disfluencies; it is AI editing, not a second audio recognition pass. Original and previously saved cleaned text stay inside expandable source details, rather than repeating the entire transcript under every heading. It cannot reliably fix misheard names or technical terms. The prompt forbids guessing unclear words, but model edits still require comparison with the original. No measured Korean recognition-accuracy improvement is claimed.
+
+### Token usage for each lecture
+
+The note header displays reported input, output and total tokens, plus the number of summary requests. Counts come from ChatGPT response usage fields, not a character-count estimate. Attempts are saved with their source blocks and restored with the lecture; retries add separate entries, including reported usage when a completed response is not valid summary JSON. Unreported, interrupted and legacy requests are marked **사용량 미확인** and excluded from the known total. They are not assumed to be free. This is the saved lecture's known usage, not your account-wide subscription balance or cost; **계정 사용량** opens the official usage page. A browser crash before autosave can also leave an attempt's usage unknown.
+
+The 75-second cadence affects paraphrasing only; STT draft timing is unchanged. Manual **지금 정리** and ending the lecture can flush a shorter remainder. Very large blocks retain the 6,400-character input bound and are split into additional requests.
 
 ### ChatGPT subscription sign-in (no Ollama)
 
 This branch uses the [official OpenAI Sign in with ChatGPT DevKit](https://github.com/openai/sign-in-with-chatgpt-devkit), with browser authorization, subscription permission, model discovery and text Responses. It does not automate or read the ChatGPT desktop app, use its cookies, or require an OpenAI API key. Your existing fine-tuned Qwen STT settings and saved lectures are preserved. Old `OLLAMA_MODEL`, `SUMMARY_MODE` and `LECTURE_SUMMARY_MODE` settings are ignored; no requests are made to Ollama.
 
-On your Mac, run `npm ci` once after switching branches, then `npm start` and open http://localhost:3000. Node.js 22+ is required. Installation builds the pinned official SDK sources. In the ChatGPT panel:
+On your Mac, run `npm ci` once after switching branches, then `npm start` and open http://localhost:3000. Node.js 22+ is required. Installation builds the pinned official SDK sources. Click **설정** to open the ChatGPT panel:
 
 1. Click **Sign in with ChatGPT** and complete the browser authorization. macOS may ask for Keychain access.
 2. Allow subscription usage if your account is eligible. If permission is missing, click **구독 사용 허용 / 다시 연결** to explicitly request it again.
@@ -148,7 +154,7 @@ One request runs at a time, separate from STT. On errors, incomplete/malformed r
 
 Credentials are encrypted with AES-256-GCM using a key stored through macOS Keychain; encrypted SDK state lives in `~/Library/Application Support/Lecture Note/chatgpt`, outside the repository. Tokens are never sent to browser JavaScript or saved in lecture records. This branch's credential provider supports macOS; other systems can still view records/demo and use their existing local STT. Loss/denial of Keychain access fails closed; it does not overwrite unreadable credentials. This is a local browser app; do not expose its localhost server through a public proxy.
 
-The DevKit is vendored from revision `f723814abdccec135b519c451fb6e1992ee5e933`, with unchanged SDK sources and its [noncommercial license](vendor/siwc-local/LICENSE). The license permits personal noncommercial use/development; commercial distribution requires separate permission. This branch does not include the deferred Electron packaging work.
+The DevKit is vendored from revision `f723814abdccec135b519c451fb6e1992ee5e933`, with a documented token-usage extension and its [noncommercial license](vendor/siwc-local/LICENSE). The license permits personal noncommercial use/development; commercial distribution requires separate permission. This branch does not include the deferred Electron packaging work.
 
 Validation uses synthetic credentials and mocked ChatGPT responses. Live OAuth, your account's eligibility and macOS Keychain prompts still need an on-device check; Linux CI cannot verify them. Browser block QA: `CHROMIUM_BIN=/path/to/chromium python3 test/browser_blocks.py http://localhost:3000`.
 

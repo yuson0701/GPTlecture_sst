@@ -6,13 +6,15 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { RecordStore } from '../local/records.mjs';
 import { createApp } from '../server.mjs';
-const record = () => ({ revision: 0, title: '경제학 강의', glossary: '기회비용', elapsed: 3600, state: 'idle', transcript: [{ id: 'one', seconds: 0, final: true, text: '기회비용을 배웁니다.' }], blocks: [{ id: 1, source: '기회비용을 배웁니다.', items: [{ id: 'one:0', seconds: 0, text: '기회비용을 배웁니다.' }], state: 'done', method: 'chatgpt', text: '선택의 비용을 설명합니다.', cleaned: '기회비용을 배웁니다.' }], summarized: ['one:0'] });
+const record = () => ({ revision: 0, title: '경제학 강의', glossary: '기회비용', elapsed: 3600, state: 'idle', transcript: [{ id: 'one', seconds: 0, final: true, text: '기회비용을 배웁니다.' }], blocks: [{ id: 1, source: '기회비용을 배웁니다.', items: [{ id: 'one:0', seconds: 0, text: '기회비용을 배웁니다.' }], state: 'done', method: 'chatgpt', sections: [{ title: '기회비용', bullets: ['최선의 대안의 가치입니다.'] }], attempts: [{ input_tokens: 100, output_tokens: 50, total_tokens: 150 }, null], text: '선택의 비용을 설명합니다.', cleaned: '기회비용을 배웁니다.' }], summarized: ['one:0'] });
 async function directory(t) { const path = await mkdtemp(join(tmpdir(), 'lecture-records-')); t.after(() => rm(path, { recursive: true, force: true })); return path; }
 test('records survive a new store instance with all source/summary pairs', async t => {
   const dir = await directory(t), id = randomUUID();
   const first = await new RecordStore(dir).save(id, { ...record(), audio: 'must not persist' });
   const store = new RecordStore(dir), saved = await store.get(id);
   assert.equal(saved.blocks[0].cleaned, record().blocks[0].cleaned);
+  assert.deepEqual(saved.blocks[0].sections, record().blocks[0].sections);
+  assert.deepEqual(saved.blocks[0].attempts, record().blocks[0].attempts);
   assert.deepEqual(saved.summarized, ['one:0']); assert.equal(saved.elapsed, 3600);
   assert.equal(saved.audio, undefined); assert.equal(first.revision, 1);
   const second = await store.save(id, { ...saved, title: '수정된 제목' });

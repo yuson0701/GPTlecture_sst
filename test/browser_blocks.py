@@ -13,7 +13,7 @@ with sync_playwright() as p:
     page.route('**/api/session', lambda r: r.fulfill(json={'session': 'test'}))
     def transcribe(r):
         n = r.request.post_data_json['sequence']
-        r.fulfill(json={'events': [{'id': str(n), 'seconds': n / 5, 'text': f'원문 번호 {n}의 강의 내용입니다.', 'final': True}]})
+        r.fulfill(json={'events': [{'id': str(n), 'seconds': n / 5, 'text': f'원문 번호 {n}의 강의 내용입니다.', 'final': True}] if n % 5 == 0 else []})
     def summary(r):
         calls.append(r.request.post_data_json)
         if len(calls) == 1:
@@ -25,21 +25,29 @@ with sync_playwright() as p:
     page.route('**/api/transcribe', transcribe)
     page.route('**/api/summary', summary)
     page.goto(sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:3010')
+    page.locator('#settings-toggle').click()
     page.locator('#chatgpt-model').select_option('test-model')
     assert not page.locator('#chatgpt-consent').is_checked()
     page.locator('#chatgpt-consent').check()
     page.locator('#new-lecture').click()
     page.locator('#start').click()
     expect(page.locator('#summarize')).to_be_enabled()
-    # The first block must be created by the live 20-second timer.
-    expect(page.locator('.summary-block[aria-busy="true"]')).to_have_count(1, timeout=25000)
+    # Wait through the old 20-second interval: no automatic request is allowed.
+    page.wait_for_timeout(22000)
+    assert not calls
+    # The first automatic block arrives at 75 seconds from recording start.
+    expect(page.locator('.summary-block[aria-busy="true"]')).to_have_count(1, timeout=60000)
     page.locator('.summary-block details').first.evaluate('(el) => el.open = true')
     source = page.locator('.block-source').inner_text()
     assert source == calls[0]['transcript']
     page.wait_for_timeout(700)
     assert page.locator('.block-source').inner_text() == source
-    held[0].fulfill(json={'summary': '첫 블록의 쉬운 설명입니다.', 'method': 'chatgpt'})
-    expect(page.locator('.summary-copy')).to_have_text('첫 블록의 쉬운 설명입니다.')
+    held[0].fulfill(json={'summary': '첫 블록의 쉬운 설명입니다.', 'method': 'chatgpt', 'usage': {'input_tokens': 1200, 'output_tokens': 300, 'total_tokens': 1500}, 'sections': [{'title': '강의의 핵심 개념', 'bullets': ['첫 블록의 쉬운 설명입니다.']} ]})
+    expect(page.locator('#token-total')).to_have_text('1,500 토큰')
+    expect(page.locator('.summary-copy h3')).to_have_text('강의의 핵심 개념')
+    expect(page.locator('.summary-copy li')).to_have_count(1)
+    page.wait_for_timeout(1200)
+    expect(page.locator('.summary-copy')).to_contain_text('첫 블록의 쉬운 설명입니다.')
     page.locator('#summarize').click()
     expect(page.locator('.summary-block')).to_have_count(2)
     expect(page.locator('.block-status').nth(1)).to_contain_text('처리 실패')
@@ -47,7 +55,9 @@ with sync_playwright() as p:
     assert page.locator('#summarize').is_disabled()
     page.locator('#chatgpt-consent').check()
     page.locator('#summarize').click()
-    expect(page.locator('.summary-copy').nth(1)).to_have_text('현재 블록의 쉬운 설명입니다.')
+    expect(page.locator('.summary-copy').nth(1)).to_contain_text('현재 블록의 쉬운 설명입니다.')
+    expect(page.locator('#token-total')).to_have_text('확인된 1,500 토큰')
+    expect(page.locator('#token-detail')).to_contain_text('2회 사용량 미확인')
     assert calls[1] == calls[2], 'Retry must retain exactly the original block'
     assert not set(calls[0]['transcript'].splitlines()) & set(calls[1]['transcript'].splitlines())
     assert all(c['previous'] == '' and c['block'] for c in calls)

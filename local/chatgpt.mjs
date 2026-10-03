@@ -1,3 +1,4 @@
+import { reportedUsage } from '../public/notes.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createChatGPT, ChatGPTError } from '../vendor/siwc-local/dist/index.js';
@@ -15,7 +16,7 @@ export function publicChatGPTError(error) {
     macos_required: 'ChatGPT 로그인은 macOS Keychain을 사용합니다. Mac에서 실행해 주세요.',
   };
   // Only the official SDK's sanitized errors may cross the HTTP boundary.
-  return { error: messages[error?.code] || (error instanceof ChatGPTError ? error.message : 'ChatGPT 연결을 완료하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.'), code: error instanceof ChatGPTError ? error.code : 'connection_error' };
+  return { usage: reportedUsage(error?.usage), error: messages[error?.code] || (error instanceof ChatGPTError ? error.message : 'ChatGPT 연결을 완료하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.'), code: error instanceof ChatGPTError ? error.code : 'connection_error' };
 }
 
 export function createChatGPTService({ client, platform = process.platform } = {}) {

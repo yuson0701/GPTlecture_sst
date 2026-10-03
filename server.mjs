@@ -6,7 +6,7 @@ import { RecordStore } from './local/records.mjs';
 import { chatgptSummary } from './local/summary.mjs';
 import { createChatGPTService, publicChatGPTError } from './local/chatgpt.mjs';
 
-const files = new Map([['/', ['index.html', 'text/html']], ...['app.js', 'chatgpt.js', 'transcript.js', 'audio.js', 'capture-worklet.js', 'streaming.js'].map(file => ['/' + file, [file, 'text/javascript']]), ['/style.css', ['style.css', 'text/css']]]);
+const files = new Map([['/', ['index.html', 'text/html']], ...['app.js', 'notes.js', 'chatgpt.js', 'transcript.js', 'audio.js', 'capture-worklet.js', 'streaming.js'].map(file => ['/' + file, [file, 'text/javascript']]), ['/style.css', ['style.css', 'text/css']]]);
 export function createApp({ env = process.env, transcriber = new LocalTranscriber(env), chatgpt = createChatGPTService() } = {}) {
   const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
   const records = new RecordStore(env.LECTURE_DATA_DIR || fileURLToPath(new URL('./data/lectures', import.meta.url)));

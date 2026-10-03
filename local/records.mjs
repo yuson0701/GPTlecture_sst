@@ -1,3 +1,4 @@
+import { reportedUsage, validSections } from '../public/notes.js';
 import { mkdir, readFile, readdir, open, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -11,11 +12,13 @@ export function validateRecord(value) {
   if (new Set(value.transcript.map(x => x.id)).size !== value.transcript.length) throw fail('Duplicate transcript IDs');
   if (!Array.isArray(value.summarized) || value.summarized.length > 100000 || value.summarized.some(x => !text(x, 180))) throw fail('Invalid summary references');
   if (!Array.isArray(value.blocks) || value.blocks.length > 10000 || value.blocks.some(x => !x || !Number.isSafeInteger(x.id) || x.id < 1 || !text(x.source, 10000) || !['pending','failed','done'].includes(x.state) || !Array.isArray(x.items) || !x.items.length || x.items.length > 1000 || x.items.some(i => !i || !seconds(i.seconds) || (i.id !== undefined && !text(i.id, 180)) || (i.text !== undefined && !text(i.text, 20000))) || ['title','text','cleaned','warning'].some(k => x[k] !== undefined && !text(x[k], 20000)))) throw fail('Invalid summary blocks');
+  if (value.blocks.some(x => (x.sections !== undefined && !validSections(x.sections)) || (x.attempts !== undefined && (!Array.isArray(x.attempts) || x.attempts.length > 1000 || x.attempts.some(u => u !== null && !reportedUsage(u)))))) throw fail('Invalid note sections or token usage');
   if (new Set(value.blocks.map(x => x.id)).size !== value.blocks.length) throw fail('Duplicate block IDs');
   // Copy only the record fields; audio and client timestamps are never stored.
   return { title: value.title, glossary: value.glossary, elapsed: value.elapsed, state: value.state, transcript: value.transcript.map(x => ({ id: x.id, text: x.text, seconds: x.seconds, final: x.final, failed: x.failed === true })),
     blocks: value.blocks.map(x => ({ id: x.id, source: x.source, state: x.state,
       method: ['chatgpt', 'ollama', 'extractive', 'demo'].includes(x.method) ? x.method : undefined,
+      sections: x.sections?.map(s => ({ title: s.title, bullets: [...s.bullets] })), attempts: x.attempts?.map(reportedUsage),
       title: x.title, text: x.text, cleaned: x.cleaned, warning: x.warning,
       items: x.items.map(i => ({ id: i.id, seconds: i.seconds, text: i.text })) })), summarized: [...value.summarized] };
 }

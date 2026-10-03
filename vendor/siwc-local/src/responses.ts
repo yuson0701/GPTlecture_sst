@@ -1,11 +1,12 @@
+// Modified by Lecture Note: preserve validated usage from terminal response events (2026-10-03).
 import { apiError, ChatGPTError, fetchRemote, isObject, jsonResponse } from "./errors.js";
-import type { StreamResponseOptions } from "./types.js";
+import type { StreamResponseOptions, ResponseUsage } from "./types.js";
 
 export async function streamResponse(
   accessToken: string,
   options: StreamResponseOptions,
   signal: AbortSignal,
-): Promise<{ text: string }> {
+): Promise<{ text: string; usage?: ResponseUsage }> {
   const input = typeof options.input === "string" ? [{ role: "user", content: options.input }] : options.input;
   if (!Array.isArray(input) || input.some((message) =>
     !isObject(message) || !["user", "assistant", "developer"].includes(String(message.role)) || typeof message.content !== "string"
@@ -44,6 +45,7 @@ export async function streamResponse(
   let eventSize = 0;
   let completed = false;
   let text = "";
+  let usage: ResponseUsage | undefined;
 
   const dispatch = () => {
     const data = dataLines.join("\n");
@@ -54,6 +56,13 @@ export async function streamResponse(
     try { event = JSON.parse(data) as unknown; }
     catch { throw new ChatGPTError("invalid_stream", "The response stream contained an invalid event. Try again.", true); }
     if (!isObject(event)) return;
+    if (["response.completed", "response.incomplete", "response.failed"].includes(String(event.type))) {
+      const reported = isObject(event.response) ? event.response.usage : undefined;
+      if (isObject(reported) && [reported.input_tokens, reported.output_tokens, reported.total_tokens].every(n => Number.isSafeInteger(n) && Number(n) >= 0) &&
+          Number(reported.input_tokens) + Number(reported.output_tokens) === reported.total_tokens) {
+        usage = { input_tokens: Number(reported.input_tokens), output_tokens: Number(reported.output_tokens), total_tokens: Number(reported.total_tokens) };
+      }
+    }
     if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
       text += event.delta;
       if (text.length > 16 * 1024 * 1024) throw new ChatGPTError("response_too_large", "The response was too large. Try a smaller request.");
@@ -103,10 +112,10 @@ export async function streamResponse(
       if (completed) break;
     }
     if (!completed) throw new ChatGPTError("stream_interrupted", "The response ended before completion. You can keep the partial text or try again.", true);
-    return { text };
+    return { text, ...(usage ? { usage } : {}) };
   } catch (error) {
     if (signal.aborted) throw new ChatGPTError("cancelled", "The response was cancelled.");
-    if (error instanceof ChatGPTError) throw error;
+    if (error instanceof ChatGPTError) throw Object.assign(error, usage ? { usage } : {});
     throw new ChatGPTError("stream_interrupted", "The connection was interrupted. You can keep the partial text or try again.", true);
   } finally {
     await reader.cancel().catch(() => undefined);

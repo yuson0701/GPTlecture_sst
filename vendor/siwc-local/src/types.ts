@@ -1,3 +1,4 @@
+// Modified by Lecture Note: expose reported response token usage (2026-10-03).
 export interface SessionIdentity {
   name?: string;
   email?: string;
@@ -72,6 +73,12 @@ export interface ResponseInputMessage {
   content: string;
 }
 
+export interface ResponseUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
 export interface StreamResponseOptions {
   model: string;
   input: string | ResponseInputMessage[];
@@ -100,7 +107,7 @@ export interface ChatGPTClient {
   subscribe(listener: (session: SessionState) => void): () => void;
   /** Sign out of the selected profile. Its registration and identity remain saved. */
   disconnect(): Promise<void>;
-  streamResponse(options: StreamResponseOptions): Promise<{ text: string }>;
+  streamResponse(options: StreamResponseOptions): Promise<{ text: string; usage?: ResponseUsage }>;
 }
 
 export interface StoredCredentials {
