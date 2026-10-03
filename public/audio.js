@@ -73,9 +73,34 @@ export function removeOverlap(previous, current) {
   return current;
 }
 
+// Measure silence from captured audio, not wall time or missing network responses.
+// Ignore isolated clicks and emit only once per pause after meaningful speech.
+export class SpeechActivity {
+  constructor(rate, onSilence, { threshold = 0.008, silenceSeconds = 5 } = {}) {
+    this.rate = rate; this.onSilence = onSilence; this.threshold = threshold;
+    this.silenceSamples = Math.ceil(rate * silenceSeconds);
+    this.total = 0; this.lastVoice = 0; this.voiced = 0; this.armed = false;
+  }
+  push(samples) {
+    this.total += samples.length;
+    const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+    if (rms >= this.threshold) {
+      this.lastVoice = this.total; this.voiced += samples.length;
+      if (this.voiced >= this.rate * 0.16) this.armed = true;
+    } else {
+      this.voiced = 0;
+      if (this.armed && this.total - this.lastVoice >= this.silenceSamples) {
+        this.armed = false;
+        this.onSilence({ throughSeconds: this.total / this.rate });
+      }
+    }
+  }
+}
+
 // Keep final audio reliable, but coalesce obsolete previews on slower hardware.
 export class AudioQueue {
-  constructor(process, onChange = () => {}, limit = 8) { this.process = process; this.onChange = onChange; this.limit = limit; this.items = []; this.running = false; this.current = null; this.failed = null; this.waiters = []; }
+  constructor(process, onChange = () => {}, limit = 64) { this.process = process; this.onChange = onChange; this.limit = limit; this.items = []; this.running = false; this.current = null; this.failed = null; this.waiters = []; }
+  get waiting() { return this.items.filter(x => x !== this.current); }
   enqueue(item) {
     if (item.id !== undefined) {
       // Never mutate an in-flight request. A final replaces queued previews.
@@ -85,10 +110,13 @@ export class AudioQueue {
         this.items.splice(index, 1);
       }
       // Preview requests are expendable; final requests are not.
-      if (item.final === false && this.items.some(x => x !== this.current && x.final !== false)) return true;
-      if (item.final !== false) this.items = this.items.filter(x => x === this.current || x.final !== false || x.id !== item.id);
+      if (item.final === false && this.items.some(x => x.final !== false)) return true;
+      // Any final takes priority over all queued drafts, including later speech.
+      if (item.final !== false) this.items = this.items.filter(x => x === this.current || x.final !== false);
     }
-    if (this.items.length >= this.limit) {
+    // About 90 seconds of 16 kHz PCM in base64; bound both bytes and item count.
+    const byteLimit = 16000 * 2 * 90 * 4 / 3;
+    while (this.items.length >= this.limit || this.items.reduce((sum, x) => sum + (x.audio?.length || 0), 0) + (item.audio?.length || 0) > byteLimit) {
       const preview = this.items.findIndex(x => x !== this.current && x.final === false);
       if (preview >= 0) this.items.splice(preview, 1);
       else return item.final === false;
@@ -113,14 +141,15 @@ export class AudioQueue {
 }
 
 export class Microphone {
-  async start(onChunk, onEnded, createSegmenter = (rate, callback) => new Segmenter(rate, callback)) {
+  async start(onChunk, onEnded, createSegmenter = (rate, callback) => new Segmenter(rate, callback), onSilence = () => {}) {
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });
       this.context = new AudioContext(); this.segmenter = createSegmenter(this.context.sampleRate, onChunk);
+      this.activity = new SpeechActivity(this.context.sampleRate, onSilence);
       await this.context.audioWorklet.addModule('/capture-worklet.js');
       this.source = this.context.createMediaStreamSource(this.stream);
       this.node = new AudioWorkletNode(this.context, 'lecture-capture');
-      this.node.port.onmessage = ({ data }) => { if (data.samples) this.segmenter.push(data.samples); if (data.flushed) this.flushed?.(); };
+      this.node.port.onmessage = ({ data }) => { if (data.samples) { this.segmenter.push(data.samples); this.activity.push(data.samples); } if (data.flushed) this.flushed?.(); };
       this.source.connect(this.node); this.node.connect(this.context.destination);
       for (const track of this.stream.getTracks()) track.onended = () => onEnded('마이크 연결이 끊겼습니다.');
       this.context.onstatechange = () => { if (!this.stopping && ['suspended', 'interrupted'].includes(this.context.state)) onEnded('마이크 처리가 중단되었습니다. 브라우저 탭을 활성화해 주세요.'); };

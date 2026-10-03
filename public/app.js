@@ -6,7 +6,7 @@ import { StreamingFrames, StreamingQueue } from './streaming.js';
 const $ = id => document.getElementById(id);
 let transcript = new Transcript(), microphone, queue, timer, demoTimer, mode = 'idle', started = 0, elapsed = 0, summaryBlocks = [], configured = false, summarizing = false;
 const summarized = new Set();
-let lastSummaryAt = 0;
+let lastSummaryAt = 0, silenceBoundary = null, lastInferenceSeconds = null;
 let qwen = false, streaming = false, streamingRows = new Map(), finalRows = 0, streamSession = null;
 const demoLines = ['오늘은 경제학의 기본 개념인 기회비용에 대해 알아보겠습니다. 기회비용은 어떤 선택을 했을 때 포기한 대안 중 가장 가치 있는 것의 가치입니다.', '예를 들어 두 시간 동안 아르바이트를 하면 2만 원을 벌 수 있지만, 그 시간에 시험 공부를 선택했다면 포기한 2만 원이 기회비용에 포함됩니다.', '여기서 중요한 것은 모든 대안의 가치를 더하는 것이 아니라, 포기한 대안 중 가장 좋은 하나만 고려한다는 점입니다.', '이미 지출해서 회수할 수 없는 비용은 매몰비용이라고 합니다. 합리적인 의사결정에서는 매몰비용보다 앞으로 발생할 비용과 편익을 비교해야 합니다.'];
 const demoParaphrases = ['기회비용은 선택 때문에 포기한 대안 중 가장 가치 있는 하나를 뜻합니다.', '공부 때문에 아르바이트를 하지 못했다면, 벌 수 있었던 2만 원이 기회비용에 포함됩니다.', '기회비용은 포기한 모든 대안의 합이 아니라, 가장 좋은 대안 하나의 가치입니다.', '매몰비용은 이미 써서 돌려받을 수 없는 돈입니다. 선택할 때는 앞으로의 비용과 이익을 비교해야 합니다.'];
@@ -202,8 +202,9 @@ function renderSummary(block) {
   card.querySelector('.block-warning').hidden = !block.warning;
 }
 function reset() {
+  silenceBoundary = null; lastInferenceSeconds = null;
   transcript = new Transcript(); streamingRows = new Map(); finalRows = 0; streamSession = null; summarized.clear(); summaryBlocks = []; elapsed = 0; queue = null; $('latency').textContent = ''; error('');
-  $('summary').textContent = '강의 내용을 기다리고 있습니다.'; $('transcript').textContent = '말씀하시면 여기에 실시간 초안이 나타납니다. 조용할 때는 기다립니다.'; $('timer').textContent = '00:00'; $('count').textContent = '0개 구간'; $('summary-status').textContent = '1분 15초마다 주제별로 정리합니다';
+  $('summary').textContent = '강의 내용을 기다리고 있습니다.'; $('transcript').textContent = '말씀하시면 여기에 실시간 초안이 나타납니다. 조용할 때는 기다립니다.'; $('timer').textContent = '00:00'; $('count').textContent = '0개 구간'; $('summary-status').textContent = '1분 15초마다 또는 5초 이상 조용할 때 정리합니다';
 }
 function canReset() { return !queue?.items.length || window.confirm('아직 처리하지 못한 음성은 이 탭에만 있습니다. 이동하면 재시도할 수 없습니다. 계속할까요?'); }
 function clock() { started = Date.now(); lastSummaryAt = started; timer = setInterval(() => { elapsed = (Date.now() - started) / 1000; $('timer').textContent = timestamp(elapsed); }, 500); }
@@ -214,11 +215,11 @@ function pendingSummary() {
     return parts;
   }).filter(item => !summarized.has(item.id));
 }
-async function summarize() {
+async function summarize({ throughSeconds = Infinity } = {}) {
   if (summarizing || mode === 'demo' || !summaryReady()) return false;
   let block = summaryBlocks.find(item => item.state === 'failed');
   if (!block) {
-    const batch = sourceBatch(pendingSummary());
+    const batch = sourceBatch(pendingSummary().filter(item => item.seconds <= throughSeconds));
     if (!batch.length) return false;
     block = { id: summaryBlocks.length + 1, items: batch, source: batch.map(x => `[${timestamp(x.seconds)}] ${x.text}`).join('\n'), state: 'pending' };
     summaryBlocks.push(block);
@@ -243,27 +244,38 @@ async function finalSummary() {
   while (summarizing) await new Promise(resolve => setTimeout(resolve, 100));
   while (pendingSummary().length) { if (!await summarize()) break; }
 }
+// Preserve a pause boundary while its final transcription is still in flight.
+// New speech after that boundary must not get mixed into the paused paragraph.
+async function autoSummarize() {
+  if (mode !== 'live' || summarizing || !summaryReady() || queue?.failed) return;
+  if (silenceBoundary !== null) {
+    const boundary = silenceBoundary;
+    const pendingAudio = queue?.items.some(item => item.seconds <= boundary && (streaming || item.final !== false));
+    if (pendingAudio) return;
+    if (pendingSummary().some(item => item.seconds <= boundary)) {
+      await summarize({ throughSeconds: boundary });
+      return;
+    }
+    silenceBoundary = null;
+  }
+  if (summaryDue(Date.now(), lastSummaryAt)) await summarize();
+}
 function queueChanged() {
-  if (mode === 'live') $('status').textContent = queue.items.length > 2 ? `듣는 중 · ${queue.items.length}개 구간 처리 대기` : '강의를 듣고 있어요';
-  if (qwen && mode === 'live' && queue.items.filter(item => item.final !== false).length >= 2) {
-    error('인식이 강의 속도를 따라가지 못해 녹음을 멈춥니다. 받은 음성은 처리합니다. 0.6B 모델을 사용하거나 다른 무거운 앱을 종료하세요.');
-    void stopLecture();
-  }
-  if (streaming && mode === 'live' && queue.items.length >= 10) {
-    error('인식 지연이 2초 이상 쌓여 녹음을 멈춥니다. 다른 무거운 앱을 종료하세요. 받은 음성은 모두 처리합니다.');
-    void stopLecture();
-  }
+  const waiting = queue.waiting.length;
+  if (mode === 'live') $('status').textContent = waiting ? `듣는 중 · ${waiting}개 대기${!streaming ? ' · 확정 전사 우선' : ''}` : '강의를 듣고 있어요';
+  if (qwen && lastInferenceSeconds !== null) $('latency').textContent = `인식 요청 ${lastInferenceSeconds.toFixed(1)}초 · 대기 ${waiting}개`;
   if (queue.failed) {
     error(`${queue.failed.message} 음성 구간은 이 탭에 보관됩니다. 처리 재시도를 눌러 주세요.`);
     if (mode === 'live') void stopLecture();
   }
   controls();
+  void autoSummarize();
 }
 function enqueue(chunk) {
   const id = chunk.id || `packet-${chunk.sequence}`;
   if (!queue.enqueue({ ...chunk, id })) {
     transcript.set(id, { seconds: chunk.seconds, text: '[처리 지연으로 이 구간을 저장하지 못했습니다]', final: true, failed: true });
-    error('컴퓨터의 처리 속도가 강의를 따라가지 못해 녹음을 멈춥니다. 누락 구간이 표시됩니다. 더 작은 모델을 선택하세요.');
+    error('처리 대기가 임시 음성 보관 한도에 도달했습니다. 녹음을 멈추고 보관된 구간을 처리합니다. 보관하지 못한 구간은 원문에 표시됩니다.');
     render();
     if (mode === 'live') void stopLecture();
   }
@@ -294,7 +306,7 @@ $('start').onclick = async () => {
         }
         throw error;
       }
-      if (qwen) $('latency').textContent = `인식 요청 ${((performance.now() - requestStarted) / 1000).toFixed(1)}초 · 대기 ${Math.max(0, queue.items.length - 1)}개`;
+      if (qwen) lastInferenceSeconds = (performance.now() - requestStarted) / 1000;
       if (transcript.items.get(chunk.id)?.failed) return;
       const previous = transcript.ordered().filter(x => x.final && !x.failed && x.seconds < chunk.seconds).at(-1)?.text || '';
       const text = chunk.overlap ? removeOverlap(previous, result.text) : result.text;
@@ -303,7 +315,11 @@ $('start').onclick = async () => {
       render();
     }, queueChanged);
     microphone = new Microphone();
-    await microphone.start(enqueue, message => { error(message); if (mode === 'live') void stopLecture(); }, streaming ? (rate, callback) => new StreamingFrames(rate, callback) : qwen ? (rate, callback) => new Segmenter(rate, callback, { previewSeconds: 0.8, pauseSeconds: 0.5, maxSeconds: 6 }) : undefined);
+    await microphone.start(enqueue, message => { error(message); if (mode === 'live') void stopLecture(); }, streaming ? (rate, callback) => new StreamingFrames(rate, callback) : qwen ? (rate, callback) => new Segmenter(rate, callback, { previewSeconds: 0.8, pauseSeconds: 0.5, maxSeconds: 6 }) : undefined, ({ throughSeconds }) => {
+      if (mode !== 'live') return;
+      silenceBoundary = throughSeconds;
+      void autoSummarize();
+    });
     mode = 'live'; clock(); $('status').textContent = '강의를 듣고 있어요'; $('notice').textContent = '로컬 처리 중 · 음성은 이 컴퓨터에서만 처리됩니다. 말하는 동안 초안이 갱신되고, 잠시 멈추면 확정됩니다. 회색 글씨는 수정될 수 있는 초안입니다.';
   } catch (e) { microphone?.dispose(); mode = 'idle'; $('status').textContent = '시작 실패'; error(e.name === 'NotAllowedError' ? '마이크 권한을 허용한 후 다시 시도해 주세요.' : e.message); }
   changed(); controls(); await saveRecord();
@@ -337,7 +353,7 @@ $('export').onclick = () => {
   const content = `# ${$('title').value || '강의 노트'}\n\n## 토큰 사용량\n${$('token-total').textContent} · ${$('token-detail').textContent}\n\n## 블록별 노트\n${blocks || '(요약 없음)'}\n\n## 전사\n${transcript.ordered().map(x => `[${timestamp(x.seconds)}] ${x.text || '(음성 없음)'}${x.final ? '' : ' [미확정 초안 / 재처리 필요]'}`).join('\n\n')}\n`;
   const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' })); const a = document.createElement('a'); a.href = url; a.download = 'lecture-notes.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
-setInterval(() => { if (mode === 'live' && summaryDue(Date.now(), lastSummaryAt)) void summarize(); }, 1000);
+setInterval(() => { void autoSummarize(); }, 1000);
 window.addEventListener('beforeunload', event => { if (changeVersion !== savedVersion || mode !== 'idle' || queue?.items.length) { event.preventDefault(); event.returnValue = ''; } });
 window.addEventListener('pagehide', () => { microphone?.dispose(); clearInterval(timer); clearInterval(demoTimer); });
 async function runAction(action) {

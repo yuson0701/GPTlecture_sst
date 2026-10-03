@@ -26,7 +26,8 @@ export class StreamingFrames {
 
 // All packets matter to a streaming decoder; no coalescing or silent dropping.
 export class StreamingQueue {
-  constructor(process, onChange = () => {}) { this.process = process; this.onChange = onChange; this.items = []; this.running = false; this.failed = null; this.waiters = []; }
+  constructor(process, onChange = () => {}) { this.process = process; this.onChange = onChange; this.items = []; this.current = null; this.running = false; this.failed = null; this.waiters = []; }
+  get waiting() { return this.items.filter(x => x !== this.current); }
   enqueue(packet) {
     if (this.items.length >= 50) return false;
     this.items.push(packet); this.onChange(); void this.pump(); return true;
@@ -34,9 +35,9 @@ export class StreamingQueue {
   async pump() {
     if (this.running || this.failed) return;
     this.running = true;
-    try { while (this.items.length) { await this.process(this.items[0]); this.items.shift(); this.onChange(); } }
+    try { while (this.items.length) { this.current = this.items[0]; await this.process(this.current); this.items.shift(); this.current = null; this.onChange(); } }
     catch (error) { this.failed = error; }
-    finally { this.running = false; this.onChange(); this.waiters.splice(0).forEach(resolve => resolve()); }
+    finally { this.current = null; this.running = false; this.onChange(); this.waiters.splice(0).forEach(resolve => resolve()); }
   }
   async settle() { if (this.running) await new Promise(resolve => this.waiters.push(resolve)); }
   retry() { this.failed = null; return this.pump(); }
