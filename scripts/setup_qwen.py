@@ -33,7 +33,7 @@ def main():
         subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', str(ROOT / 'requirements-qwen-mac.txt')], check=True)
     from huggingface_hub import snapshot_download
     repo = MODELS[args.size]
-    print(f'Downloading {repo}. Fine-tuned setup also needs Hugging Face access to {DEFAULT_ADAPTER}.', flush=True)
+    print(f'Downloading public model {repo}. No Hugging Face login or token is required.', flush=True)
     # Runtime uses this exact cached snapshot, not a moving remote branch.
     destination = snapshot_download(repo, revision=BASE_REVISION if args.size == '1.7B' else None,
                                     allow_patterns=['*.json', '*.safetensors', '*.txt', '*.model', '*.tiktoken'])
@@ -43,7 +43,7 @@ def main():
             adapter = snapshot_download(DEFAULT_ADAPTER, revision=ADAPTER_REVISION,
                                         allow_patterns=['adapter_config.json', 'selected.safetensors'])
         except Exception as exc:
-            raise SystemExit(f'Cannot download the private lecture adapter. Run .venv-qwen/bin/hf auth login with an account that has access to {DEFAULT_ADAPTER}, then retry. Existing .env is unchanged.') from exc
+            raise SystemExit(f'Cannot download the public lecture adapter from {DEFAULT_ADAPTER}. Check your internet connection and Hugging Face availability, then retry npm run setup:qwen. No login is required. Existing .env is unchanged.') from exc
     settings = {'STT_BACKEND': 'qwen-mlx', 'QWEN_ASR_MODEL': destination, 'QWEN_ASR_ADAPTER': adapter,
                 'QWEN_ASR_ADAPTER_REVISION': ADAPTER_REVISION if adapter != 'none' else '',
                 'PYTHON_BIN': str(ROOT / '.venv-qwen/bin/python')}

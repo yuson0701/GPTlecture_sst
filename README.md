@@ -22,7 +22,7 @@ Persistence QA: `CHROMIUM_BIN=/path/to/chromium python3 test/browser_library.py`
 
 ## Fine-tuned Qwen3-ASR for Korean on Apple Silicon
 
-The default Qwen setup uses **your Korean lecture LoRA adapter on Qwen3-ASR-1.7B (8-bit)**, running locally on the Apple GPU through MLX Audio. The adapter is hosted at [yuson0701/qwen3-asr-1.7b-korean-lecture-lora-mlx](https://huggingface.co/yuson0701/qwen3-asr-1.7b-korean-lecture-lora-mlx), a private Hugging Face model repository. The installer downloads the exact base revision and adapter revision together; the runtime validates both and never silently falls back to the base model.
+The default Qwen setup uses **your Korean lecture LoRA adapter on Qwen3-ASR-1.7B (8-bit)**, running locally on the Apple GPU through MLX Audio. The adapter is hosted at [yuson0701/qwen3-asr-1.7b-korean-lecture-lora-mlx](https://huggingface.co/yuson0701/qwen3-asr-1.7b-korean-lecture-lora-mlx), a public Hugging Face model repository. The installer downloads the exact base revision and adapter revision together; the runtime validates both and never silently falls back to the base model.
 
 Stop the app with Ctrl+C, then run:
 
@@ -33,7 +33,7 @@ npm run setup:qwen
 npm start
 ```
 
-The private adapter requires a Hugging Face account with repository access. If setup asks for authentication, run `.venv-qwen/bin/hf auth login`, enter a read-enabled token locally, and rerun `npm run setup:qwen`. Never put the token in Git or the browser app. Hugging Face is used only to download weights; speech recognition runs offline.
+The base model and adapter are public; no Hugging Face account, login, or token is required. Initial setup needs internet access to download dependencies and weights. Speech recognition runs offline after setup.
 
 Refresh the browser. The label must say **Qwen3-ASR · Apple GPU · 1.7B · 강의 미세조정**. Use native ARM Node.js and Python on Apple Silicon, not Rosetta. The tested environment uses Python 3.14; runtime requirements pin MLX 0.32.3, MLX Audio's tested source revision, Transformers 5.18.0, and Hugging Face Hub 1.33.0. Setup uses a separate `.venv-qwen`, verifies the adapter/base hashes, and loads/warms the GPU **before** changing `.env`. It preserves other settings and backs up the original configuration to `.env.before-qwen`.
 

@@ -101,14 +101,14 @@ class QwenTests(unittest.TestCase):
                 setup.main()
             self.assertEqual(env.read_text(), 'STT_BACKEND=sherpa\n')
 
-    def test_setup_private_download_failure_preserves_existing_env(self):
+    def test_setup_public_download_failure_preserves_existing_env(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(setup, 'ROOT', Path(temp)), \
                 patch.object(setup, 'validate_platform'), \
-                patch('huggingface_hub.snapshot_download', side_effect=['/cached/base', RuntimeError('unauthorized')]), \
+                patch('huggingface_hub.snapshot_download', side_effect=['/cached/base', RuntimeError('network unavailable')]), \
                 patch.object(sys, 'argv', ['setup_qwen.py', '--skip-install']):
             env = Path(temp) / '.env'
             env.write_text('STT_BACKEND=sherpa\n')
-            with self.assertRaisesRegex(SystemExit, 'auth login'):
+            with self.assertRaisesRegex(SystemExit, 'No login is required'):
                 setup.main()
             self.assertEqual(env.read_text(), 'STT_BACKEND=sherpa\n')
 
