@@ -7,7 +7,7 @@ import train_qwen_lora as training
 from qwen_decode import decode_audio, policy_proof
 
 
-def load_portable_adapter(model_path, adapter_directory):
+def validate_package(model_path, adapter_directory):
     directory = Path(adapter_directory)
     config = json.loads((directory / 'adapter_config.json').read_text())
     training.require(config.get('format') == 'qwen3-asr-mlx-lora-v1', 'Unsupported adapter format')
@@ -17,6 +17,13 @@ def load_portable_adapter(model_path, adapter_directory):
                      'Base model configuration differs from the training snapshot')
     adapter = directory / 'selected.safetensors'
     training.require(training.sha256(adapter) == config['adapter_sha256'], 'Adapter checksum mismatch')
+    return config
+
+
+def load_portable_adapter(model_path, adapter_directory):
+    config = validate_package(model_path, adapter_directory)
+    model_path = Path(model_path).expanduser().resolve()
+    adapter = Path(adapter_directory) / 'selected.safetensors'
     training.runtime()
     model = training.load_base(model_path)
     training.inject_lora(model, config['rank'], config['layers'], config['alpha'])

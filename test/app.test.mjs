@@ -183,6 +183,14 @@ test('Qwen config advertises Apple GPU and does not select Zipformer packet mode
   assert.equal(config.backend, 'qwen-mlx'); assert.equal(config.streaming, false);
   assert.match(config.model, /Qwen3-ASR.*Apple GPU/);
 });
+test('Qwen config identifies the validated fine-tuned backend', async t => {
+  const { base } = await serve(t, { env: { STT_BACKEND: 'qwen-mlx' },
+    transcriber: { request: async () => ({ available: true, fineTuned: true }), close() {} } });
+  const config = await (await fetch(base + '/api/config')).json();
+  assert.equal(config.configured, true);
+  assert.equal(config.fineTuned, true);
+  assert.match(config.model, /강의 미세조정/);
+});
 test('Qwen capture bounds context to six seconds and reduces preview frequency', () => {
   const packets = [];
   const segmenter = new Segmenter(16000, packet => packets.push(packet), { previewSeconds: 0.8, maxSeconds: 6 });

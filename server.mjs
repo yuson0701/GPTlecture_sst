@@ -27,7 +27,7 @@ export function createApp({ env = process.env, fetcher = fetch, transcriber = ne
       }
       if (req.method === 'GET' && req.url === '/api/config') {
         let status; try { status = await transcriber.request('status'); } catch { status = { available: false }; }
-        return json(res, 200, { configured: status.available, reason: status.reason, streaming, backend: qwen ? 'qwen-mlx' : undefined, model: qwen ? `Qwen3-ASR · Apple GPU · ${env.QWEN_ASR_MODEL?.match(/Qwen3-ASR-(0\.6B|1\.7B)/)?.[1] || '1.7B'}` : streaming ? 'Korean Zipformer · 실시간 스트리밍' : (env.STT_BACKEND || env.WHISPER_BACKEND) === 'mlx' ? `MLX · Apple GPU · ${env.MLX_WHISPER_MODEL || 'whisper-turbo'}` : `faster-whisper · ${env.WHISPER_MODEL || 'large-v3-turbo'}`, summary: env.SUMMARY_MODE === 'extractive' ? 'extractive' : 'ollama', local: true });
+        return json(res, 200, { configured: status.available, reason: status.reason, streaming, backend: qwen ? 'qwen-mlx' : undefined, fineTuned: qwen && status.fineTuned === true, model: qwen ? `Qwen3-ASR · Apple GPU · ${env.QWEN_ASR_MODEL?.match(/Qwen3-ASR-(0\.6B|1\.7B)/)?.[1] || '1.7B'}${status.fineTuned ? ' · 강의 미세조정' : ''}` : streaming ? 'Korean Zipformer · 실시간 스트리밍' : (env.STT_BACKEND || env.WHISPER_BACKEND) === 'mlx' ? `MLX · Apple GPU · ${env.MLX_WHISPER_MODEL || 'whisper-turbo'}` : `faster-whisper · ${env.WHISPER_MODEL || 'large-v3-turbo'}`, summary: env.SUMMARY_MODE === 'extractive' ? 'extractive' : 'ollama', local: true });
       }
       if (['GET', 'HEAD'].includes(req.method) && files.has(req.url)) {
         const [file, mime] = files.get(req.url), content = await readFile(new URL(`./public/${file}`, import.meta.url));

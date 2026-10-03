@@ -20,25 +20,29 @@ Records live in **`data/lectures/` inside the project folder**, one JSON file pe
 
 Persistence QA: `CHROMIUM_BIN=/path/to/chromium python3 test/browser_library.py` runs an isolated server with temporary storage, saves records, restarts the server, reopens the notes, and tests failed-save recovery.
 
-## New branch: Qwen3-ASR for Korean on Apple Silicon
+## Fine-tuned Qwen3-ASR for Korean on Apple Silicon
 
-This branch adds **Qwen3-ASR-1.7B (8-bit), running on the Apple GPU through MLX Audio**, as an accuracy-oriented alternative to Korean Zipformer. It also offers **0.6B (8-bit)** for a smaller model. The existing `work` branch is unchanged.
+The default Qwen setup uses **your Korean lecture LoRA adapter on Qwen3-ASR-1.7B (8-bit)**, running locally on the Apple GPU through MLX Audio. The adapter is hosted at [yuson0701/qwen3-asr-1.7b-korean-lecture-lora-mlx](https://huggingface.co/yuson0701/qwen3-asr-1.7b-korean-lecture-lora-mlx), a private Hugging Face model repository. The installer downloads the exact base revision and adapter revision together; the runtime validates both and never silently falls back to the base model.
 
 Stop the app with Ctrl+C, then run:
 
 ```sh
 git fetch origin
-git switch feature/qwen3-korean-asr
+git switch feature/lecture-library
 npm run setup:qwen
 npm start
 ```
 
-Refresh the browser. The label must say **Qwen3-ASR · Apple GPU · 1.7B**. Use native ARM Node.js and Python 3.10+ on your M5; Python 3.12 is recommended. Do not run the terminal under Rosetta. The initial setup downloads packages and model weights, uses a separate `.venv-qwen`, verifies all model files, and loads/warms the GPU **before** changing `.env`. It backs up existing settings to `.env.before-qwen`. No OpenAI API is involved, and speech stays local. GitHub hosts the implementation; Hugging Face hosts the community-converted weights.
+The private adapter requires a Hugging Face account with repository access. If setup asks for authentication, run `.venv-qwen/bin/hf auth login`, enter a read-enabled token locally, and rerun `npm run setup:qwen`. Never put the token in Git or the browser app. Hugging Face is used only to download weights; speech recognition runs offline.
 
-For the smaller model:
+Refresh the browser. The label must say **Qwen3-ASR · Apple GPU · 1.7B · 강의 미세조정**. Use native ARM Node.js and Python on Apple Silicon, not Rosetta. The tested environment uses Python 3.14; runtime requirements pin MLX 0.32.3, MLX Audio's tested source revision, Transformers 5.18.0, and Hugging Face Hub 1.33.0. Setup uses a separate `.venv-qwen`, verifies the adapter/base hashes, and loads/warms the GPU **before** changing `.env`. It preserves other settings and backs up the original configuration to `.env.before-qwen`.
+
+Setup writes `QWEN_ASR_MODEL` and `QWEN_ASR_ADAPTER` as local snapshot paths. Merely setting `QWEN_ASR_MODEL` to the adapter repository is insufficient: the adapter is not a standalone model. The server loads the base plus adapter once per worker. Model files stay in the Hugging Face cache, and datasets remain Git-ignored.
+
+For an explicit base-only comparison with the smaller original model:
 
 ```sh
-npm run setup:qwen -- --size 0.6B
+npm run setup:qwen -- --base-only --size 0.6B
 npm start
 ```
 
@@ -57,9 +61,9 @@ Sources reviewed: [Qwen3-ASR repository and evaluation](https://github.com/QwenL
 
 ### Latency and honest validation
 
-This implementation uses rolling audio windows, **not persistent Zipformer-style encoder state**. It requests drafts after approximately 0.8 seconds of speech, updates them as new audio arrives, and finalizes on a pause or after about 6 seconds. Old queued drafts are replaced, final audio is retained, and a sustained final-audio backlog stops capture visibly. Silero VAD rejects silent windows. Course vocabulary is sent through Qwen's native hotword prompt. The timing shown is request duration, not total spoken-word latency.
+This implementation uses rolling audio windows, **not persistent Zipformer-style encoder state**. It requests drafts after approximately 0.8 seconds of speech, updates them as new audio arrives, and finalizes on a pause or after about 6 seconds. Old queued drafts are replaced, final audio is retained, and a sustained final-audio backlog stops capture visibly. Silero VAD rejects silent windows. Course vocabulary is sent through Qwen's native hotword prompt, including retries. Fine-tuned inference uses the evaluated bounded retry policy for repetition/token limits and reports an error if recovery fails. The timing shown is request duration, not total spoken-word latency.
 
-**0–3 seconds is a target, not a verified result.** The development machine is Linux and cannot run the Apple GPU backend. Tests verify integration and failure behavior using mocked inference; real-model speed, Korean accuracy, memory use, and a full-hour thermal test must be checked on the Mac. Earlier Zipformer performance numbers below do not apply to Qwen. Ollama paragraph cleanup is separate from speech recognition and may compete for GPU/memory while recording.
+On one reserved lecture, the adapter reduced normalized character error rate from **43.18% to 21.02%** with the same fixed retry policy (raw fine-tuned CER: **30.20%**). These scores use source paragraph clips and supplied transcripts, not the app's shorter rolling windows; they do not establish live lecture accuracy or latency. **0–3 seconds remains a target.** A full-hour thermal test has not been completed. Earlier Zipformer performance numbers below do not apply to Qwen. Ollama paragraph cleanup is separate from speech recognition and may compete for GPU/memory while recording.
 
 For a reproducible check on your own Korean recording (16 kHz mono PCM16 WAV):
 
