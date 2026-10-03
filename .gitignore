@@ -11,3 +11,9 @@ models/
 .env.before-qwen
 
 data/
+
+# Private ASR corpora, labels, alignment reports and model outputs.
+voiceinput_output/
+datasets/
+checkpoints/
+qwen3-asr-finetuning-out/

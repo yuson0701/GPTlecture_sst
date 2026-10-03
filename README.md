@@ -188,6 +188,262 @@ This feeds one hour of audio (repeating the included Korean recording) as fast a
 
 Optional browser checks require Playwright and Chromium. `test/browser_smoke.py` covers the original Whisper-style UI using mocked responses. With the streaming server running, `CHROMIUM_BIN=/path/to/chromium python3 test/browser_streaming.py http://127.0.0.1:3000` exercises the real Korean model through browser microphone capture, finalization, export, and mobile layout. Streaming unit tests additionally cover sequence validation, idempotent retries, decoder failure recovery, and one-hour capture continuity.
 
+## Preparing a private Qwen3-ASR dataset
+
+The dataset tools operate locally and never launch training. Keep raw exports in
+the sibling `../voiceinput_output/` directory and generated material in ignored
+`data/qwen3_asr/`. Only reusable code and synthetic tests belong in Git.
+
+Install the extra Korean alignment dependency in the existing Qwen environment:
+
+```sh
+.venv-qwen/bin/python -m pip install -r requirements-qwen-dataset.txt
+```
+
+Preparation pairs `.m4a` with `스크립트.txt` using Unicode-normalized names;
+`문서.txt` and `요약.txt` are excluded. It removes export metadata, speaker labels,
+and known non-speech events while preserving the spoken wording and English
+terms. Original files, hashes, removal logs, and cleaned paragraph offsets are
+retained. Whole lectures are assigned to train/validation/test in the private
+`source_config.json` before any clipping. Repeated lecturer titles must share a
+split, but titles are not verified speaker identities.
+
+```sh
+.venv-qwen/bin/python scripts/prepare_qwen_dataset.py \
+  --split-config data/qwen3_asr/source_config.json
+.venv-qwen/bin/python scripts/align_qwen_dataset.py --stage asr
+.venv-qwen/bin/python scripts/align_qwen_dataset.py --stage align \
+  --aligner /absolute/path/to/local/Qwen3-ForcedAligner-0.6B-8bit/snapshot
+.venv-qwen/bin/python scripts/build_qwen_review.py
+```
+
+The aligner snapshot can be downloaded once from
+[`mlx-community/Qwen3-ForcedAligner-0.6B-8bit`](https://huggingface.co/mlx-community/Qwen3-ForcedAligner-0.6B-8bit)
+into the ignored dataset model cache. The acoustic audit uses the cached
+Qwen3-ASR model independently of the exported labels, then forced-aligns matching
+reference spans. It rejects poor text agreement, truncated ASR output, invalid
+timestamps, partial words, implausible durations, overlaps, and duplicate audio.
+ASR and alignment caches are resumable and checked against source provenance.
+Fixed windows are used to find reference text; final clips use aligned word
+boundaries. No timing is inferred from paragraph lengths or export timestamps.
+
+`alignment_report.json` records counts and limitations. `segments.jsonl` retains
+per-clip evidence; `quarantine.jsonl` records exclusions. `candidates/*.jsonl`
+uses the [official Qwen fine-tuning format](https://github.com/QwenLM/Qwen3-ASR/blob/main/finetuning/README.md):
+
+```json
+{"audio":"/absolute/path/clip.wav","text":"language Korean<asr_text>전사 내용"}
+```
+
+`boundary_review/*.jsonl` is a separate review queue, not an alignment pass.
+It retains clips with positive boundary timestamps but sparse isolated internal
+zero-duration words, high ASR agreement, and no other alignment failures. Their
+warnings remain attached; no words are removed to make a clip pass. The review
+page labels this queue explicitly, and export requires human listening approval.
+
+Candidates are machine-checked labels, not verified ground truth. Open the local
+`data/qwen3_asr/review.html`, listen to the clips, check verbatim text and word
+boundaries, and export review decisions. Approvals are tied to audio/text hashes;
+changed labels require a fresh alignment. Publish only approved examples with:
+
+```sh
+.venv-qwen/bin/python scripts/export_reviewed_qwen_dataset.py \
+  --review-file /absolute/path/to/review-decisions.jsonl
+```
+
+High ASR disagreement may reflect recognition errors on medical terminology,
+not an incorrect reference. Quarantine preserves these examples for correction
+and alignment review; do not interpret rejection rates as transcript accuracy.
+Preserve original exports when correcting labels, and prepare corrected copies
+into a new ignored output directory with the same lecture split configuration.
+
+This produces `reviewed/train.jsonl`, `reviewed/validation.jsonl`, and
+`reviewed/test.jsonl` only after consistency checks pass. Before training,
+establish baseline CER on the reviewed validation set. Use validation with the
+official trainer's `--eval_file`; reserve test for the final comparison and keep
+it out of training, glossary tuning, and model selection. Small held-out lecture
+sets do not establish general performance across speakers or courses.
+
+Run the preparation checks with:
+
+```sh
+.venv-qwen/bin/python -m unittest discover -s test -p '*qwen*dataset*test.py'
+.venv-qwen/bin/python -m unittest discover -s test -p 'qwen_alignment_checks_test.py'
+```
+
+## Original Tiro paragraph timestamps
+
+When the original Tiro share contains paragraph start and end times, use those
+times directly with the original exported labels. Run whole-lecture preparation
+above first to freeze the train/validation/test assignments. Create the private
+`data/tiro_timestamps/sources.json` with a `sources` list containing each frozen
+`lecture_id` and its explicit Tiro share `url`, then run:
+
+```sh
+.venv-qwen/bin/python scripts/fetch_tiro_timestamps.py \
+  --sources data/tiro_timestamps/sources.json \
+  --output data/tiro_timestamps/raw
+.venv-qwen/bin/python scripts/prepare_tiro_dataset.py \
+  --base-dataset data/qwen3_asr --output data/tiro_timestamps \
+  --max-duration 90
+```
+
+Fetching reads only the listed share pages and reuses cached pages. Preparation
+runs locally without model inference. It checks cached page hashes and parsed
+timestamps, original source hashes, share titles, and the frozen lecture split.
+The complete cleaned share transcript must match the complete local original
+script, allowing only Unicode composition and whitespace differences. Labels
+are never replaced by Qwen predictions, and ASR agreement does not select clips.
+
+Each accepted WAV is an exact PCM slice of its normalized lecture, using the
+paragraph's own integer millisecond start and end times. Gaps remain gaps. Missing,
+overlapping, unordered, or out-of-bounds times, paragraphs longer than the limit,
+empty speech labels, unusable audio, and exact duplicate audio are withheld whole
+in `quarantine.jsonl`. Times are never interpolated or clamped. Stale note-level
+duration metadata is reported separately; valid paragraph bounds must still fit
+the waveform.
+
+`segments.jsonl` records all source intervals, labels, hashes, acoustic checks,
+and exclusions. `report.json` records coverage and provenance. The resulting
+`train.jsonl`, `validation.jsonl`, and `test.jsonl` use the Qwen format shown above.
+Use validation for model selection and reserve test for the final evaluation.
+These source timestamps are not a claim of new manual word-level verification;
+source transcription errors may remain. New clips retain `human_review: pending`.
+Keep pages, source URLs, clips, and reports under ignored `data/`, and adapters
+under ignored `checkpoints/`. Reruns verify existing artifacts and refuse changed
+inputs or output.
+
+```sh
+.venv-qwen/bin/python -m unittest discover -s test -p 'prepare_tiro_dataset_test.py'
+```
+
+## Local Qwen LoRA training on Apple Silicon
+
+`scripts/train_qwen_lora.py` adapts the last eight decoder layers of a local
+8-bit Qwen3-ASR snapshot. The audio encoder and base weights stay frozen; only
+rank-eight query/value adapters are optimized. It uses the original labels,
+including the first transcript token and the end-of-transcript token, and does
+not apply a loss to the audio prompt. This implementation is checked against
+MLX 0.32.3, MLX Audio 0.5.7, and Transformers 5.18.0 in `.venv-qwen`.
+
+```sh
+.venv-qwen/bin/python scripts/train_qwen_lora.py \
+  --model /absolute/path/to/local/Qwen3-ASR-1.7B-8bit/snapshot \
+  --train-file data/tiro_timestamps/train.jsonl \
+  --validation-file data/tiro_timestamps/validation.jsonl \
+  --output checkpoints/qwen3_asr_lora \
+  --epochs 3 --learning-rate 0.00005
+```
+
+Use a fresh ignored output directory for each run. The trainer verifies lecture,
+file, and PCM separation between training and validation, and never discovers a
+test manifest. It rejects clips above 90 seconds or labels above the token limit
+instead of truncating them. Frozen intermediate features are cached privately
+on disk to limit memory use. No data is uploaded and no weights are downloaded.
+
+The run records input audio/text hashes, training history, baseline and adapted
+validation transcripts, and a `training_report.json`. Selection uses validation
+token loss, with the unchanged baseline also eligible. `selected.safetensors`
+contains the chosen adapter; `best_trained.safetensors` preserves the best trained
+checkpoint even if the baseline wins. Compare validation CER as well as loss
+before adopting the adapter. Test remains reserved for a final evaluation.
+
+Reload the saved adapter for local recognition with:
+
+```sh
+.venv-qwen/bin/python scripts/train_qwen_lora.py \
+  --model /absolute/path/to/local/Qwen3-ASR-1.7B-8bit/snapshot \
+  --output checkpoints/qwen3_asr_lora \
+  --infer-audio /absolute/path/to/mono-16000hz-pcm16.wav
+```
+
+Inference accepts clips up to 90 seconds and returns JSON with the transcript
+and decoding evidence. Successful full-clip predictions remain unchanged. If a
+prediction reaches its token limit or repeats a lexical phrase ten times in a
+row, the decoder retries complete, nonoverlapping audio sections of at most
+15 seconds, with bounded further bisection for failed sections. It never uses a
+reference transcript for these retries. Unresolved outputs remain flagged.
+
+Training does not change the running application's model configuration. Adapter
+reload verifies the base weights and saved adapter hashes. Training completion
+also checks that the base weights, input manifests, and input WAVs are unchanged.
+
+Once the checkpoint is fixed, evaluate the reserved test lecture separately:
+
+```sh
+.venv-qwen/bin/python scripts/evaluate_qwen_lora.py \
+  --model /absolute/path/to/local/Qwen3-ASR-1.7B-8bit/snapshot \
+  --run checkpoints/qwen3_asr_lora \
+  --test-file data/tiro_timestamps/test.jsonl \
+  --output data/qwen3_asr_lora_test
+```
+
+This checks test lecture/audio separation against the run's saved provenance,
+then compares the base model and the already selected adapter using the identical
+bounded decoding policy. Both raw initial and final CER are recorded, together
+with retries and unresolved outputs. Training reports retain their original raw
+greedy validation results. Unresolved outputs remain in the reported score. Evaluation
+does not train, change the checkpoint, or select a different one based on test
+results. Each evaluation requires a new ignored output directory.
+
+Build an offline comparison after evaluation finishes:
+
+```sh
+.venv-qwen/bin/python scripts/build_qwen_training_comparison.py \
+  --evaluation-dir data/qwen3_asr_lora_test
+```
+
+Open the generated `comparison.html` to listen to each test clip and compare the
+original transcript, baseline prediction, and adapted prediction. The page shows
+both raw and final character error rates, highlights text differences, and keeps
+retry evidence visible. The page and its private transcripts stay under `data/`.
+
+```sh
+.venv-qwen/bin/python -m unittest discover -s test -p 'qwen_lora_test.py'
+.venv-qwen/bin/python -m unittest discover -s test -p 'evaluate_qwen_lora_test.py'
+```
+
+### Portable adapter inference
+
+An exported adapter package can be loaded without the private training manifests
+or local run paths using `scripts/infer_qwen_adapter.py`:
+
+```sh
+.venv-qwen/bin/python scripts/infer_qwen_adapter.py \
+  --model /absolute/path/to/pinned/base/snapshot \
+  --adapter /absolute/path/to/downloaded/adapter \
+  --audio /absolute/path/to/clip.wav
+```
+
+The package must use `qwen3-asr-mlx-lora-v1` configuration and contain
+`selected.safetensors`. The loader verifies base configuration and weight hashes,
+adapter integrity, and the fixed decoding policy. It accepts mono 16 kHz PCM16 WAV
+clips up to 90 seconds and returns JSON with raw/final transcripts and retry
+evidence. This custom MLX format is not a standalone Transformers or PEFT model.
+Keep downloaded base models and adapters under ignored `models/` or `checkpoints/`.
+
+## Full Qwen transcripts and comparison
+
+Export all Qwen recognition output independently of alignment eligibility:
+
+```sh
+.venv-qwen/bin/python scripts/export_qwen_transcripts.py
+.venv-qwen/bin/python scripts/build_qwen_comparison.py
+```
+
+The exporter reuses the complete ASR pass and retranscribes token-limited windows
+in shorter intervals, without prompting with reference words. It writes plain
+and timed transcripts under ignored `data/qwen_transcripts/transcripts/`, plus
+`comparison.json`. Times identify input windows rather than word boundaries.
+The frozen fine-tuning dataset and original exports remain unchanged.
+
+Open `data/qwen_transcripts/comparison.html` to compare wording, inspect full
+transcripts, and listen to the corresponding audio. The percentage is normalized
+character edit distance against the original script, not model accuracy.
+Spacing and punctuation are excluded from the score; English spelling versus
+phonetic Korean still counts as a difference. The visual diff also shows
+punctuation and spacing changes.
+
 ## Privacy and limitations
 
 The server binds only to localhost, rejects cross-origin API calls, and processes speech locally. Initial package/model downloads require internet; lecture-time inference does not download weights. The model is from the official [sherpa-onnx Korean streaming release](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-korean-2024-06-16.tar.bz2). Training provenance is linked in the [upstream model documentation](https://github.com/k2-fsa/sherpa/blob/master/docs/source/onnx/pretrained_models/online-transducer/zipformer-transducer-models.rst).
