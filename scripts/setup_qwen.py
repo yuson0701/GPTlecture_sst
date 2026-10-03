@@ -33,7 +33,9 @@ def main():
     destination = snapshot_download(repo, allow_patterns=['*.json', '*.safetensors', '*.txt', '*.model', '*.tiktoken'])
     env = {**os.environ, 'QWEN_ASR_MODEL': destination, 'HF_HUB_OFFLINE': '1', 'HF_HUB_DISABLE_TELEMETRY': '1'}
     print('Checking complete files and warming the Apple GPU before changing settings…', flush=True)
-    subprocess.run([sys.executable, '-c', 'from qwen_asr import QwenRecognizer; QwenRecognizer(); print("Qwen GPU load OK")'], cwd=ROOT / 'local', env=env, check=True)
+    verification = subprocess.run([sys.executable, '-c', 'from qwen_asr import QwenRecognizer; QwenRecognizer(); print("Qwen GPU load OK")'], cwd=ROOT / 'local', env=env, check=False)
+    if verification.returncode:
+        raise SystemExit('Qwen 모델 확인에 실패했습니다. 위 오류를 확인하세요. 기존 .env는 변경하지 않았으며 다운로드 파일은 보관되어 있습니다.')
     update_env(ROOT / '.env', {'STT_BACKEND': 'qwen-mlx', 'QWEN_ASR_MODEL': destination,
                                'PYTHON_BIN': str(ROOT / '.venv-qwen/bin/python')})
     print('Qwen3-ASR selected. Restart npm start and refresh the browser. Prior settings: .env.before-qwen', flush=True)

@@ -22,14 +22,21 @@ def model_path():
     if not path.is_dir():
         from huggingface_hub import snapshot_download
         path = Path(snapshot_download(name, local_files_only=True))
-    required = ['config.json', 'tokenizer_config.json', 'tokenizer.json', 'preprocessor_config.json']
-    if not all((path / file).is_file() for file in required) or not list(path.glob('*.safetensors')):
-        raise RuntimeError('Qwen3-ASR 모델 파일이 없습니다. npm run setup:qwen을 실행하세요.')
+    required = ['config.json', 'tokenizer_config.json', 'preprocessor_config.json']
+    missing = [file for file in required if not (path / file).is_file()]
+    # Qwen tokenizers may ship as vocabulary + merges instead of tokenizer.json.
+    # Both layouts are accepted by Transformers' tokenizer loader.
+    if not (path / 'tokenizer.json').is_file() and not all((path / file).is_file() for file in ('vocab.json', 'merges.txt')):
+        missing.append('tokenizer.json 또는 vocab.json + merges.txt')
+    if not list(path.glob('*.safetensors')):
+        missing.append('*.safetensors')
+    if missing:
+        raise RuntimeError(f'Qwen3-ASR 파일 확인 실패: {", ".join(missing)}. 경로: {path}. npm run setup:qwen을 다시 실행하세요. 기존 다운로드는 재사용됩니다.')
     index = path / 'model.safetensors.index.json'
     if index.exists():
         for shard in set(json.loads(index.read_text())['weight_map'].values()):
             if not (path / shard).is_file():
-                raise RuntimeError('Qwen3-ASR 모델 다운로드가 불완전합니다. 설치를 다시 실행하세요.')
+                raise RuntimeError(f'Qwen3-ASR 모델 조각이 없습니다: {shard}. 경로: {path}. 설치를 다시 실행하세요.')
     return path.resolve()
 
 

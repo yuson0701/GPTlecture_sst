@@ -76,6 +76,20 @@ class QwenTests(unittest.TestCase):
             (root / 'model-2.safetensors').write_bytes(b'fixture')
             self.assertEqual(model_path(), root.resolve())
 
+    def test_split_qwen_tokenizer_without_tokenizer_json(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'QWEN_ASR_MODEL': temp}):
+            root = Path(temp)
+            for name in ['config.json', 'tokenizer_config.json', 'preprocessor_config.json', 'vocab.json', 'merges.txt', 'model.safetensors']:
+                (root / name).write_text('{}')
+            self.assertEqual(model_path(), root.resolve())
+            (root / 'merges.txt').unlink()
+            with self.assertRaisesRegex(RuntimeError, r'vocab.json \+ merges.txt'):
+                model_path()
+            (root / 'tokenizer.json').write_text('{}')
+            (root / 'preprocessor_config.json').unlink()
+            with self.assertRaisesRegex(RuntimeError, 'preprocessor_config.json'):
+                model_path()
+
     def test_setup_preserves_prior_settings_and_backup(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / '.env'
