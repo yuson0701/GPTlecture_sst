@@ -1,0 +1,42 @@
+name: Build Mac desktop app
+on:
+  push:
+    branches: [feature/mac-desktop]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: astral-sh/setup-uv@v6
+      - name: Verify Apple Silicon builder
+        run: test "$(uname -m)" = arm64
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - name: Bundle relocatable Python and native model dependencies
+        run: npm run desktop:python
+      - name: Build Apple Silicon DMG and ZIP
+        run: npm run desktop:build
+      - name: Smoke test packaged runtime and desktop window
+        run: |
+          APP="dist/mac-arm64/Lecture Note.app"
+          PYTHONHOME="$PWD/$APP/Contents/Resources/python" "$APP/Contents/Resources/python/bin/python3.14" -c 'import mlx.core, mlx_audio, transformers, faster_whisper; print("Packaged Python OK")'
+          LECTURE_DESKTOP_SMOKE=1 "$APP/Contents/MacOS/Lecture Note"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lecture-Note-Apple-Silicon
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 30

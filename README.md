@@ -2,6 +2,30 @@
 
 Local Korean speech recognition and lecture notes, with no API key or cloud speech service.
 
+## Mac desktop application
+
+The `feature/mac-desktop` branch adds an **Apple Silicon Mac app** (macOS 15 or newer). It bundles Electron/Node and a relocatable Python 3.14 runtime with the speech dependencies. End users do not need a terminal, npm, Homebrew, or a separate Python installation.
+
+The **Build Mac desktop app** workflow builds an ARM64 `.dmg` and `.zip`. After a successful run, download the **Lecture-Note-Apple-Silicon** artifact from [GitHub Actions](https://github.com/yuson0701/GPTlecture_sst/actions), unzip it, open the DMG, and drag **Lecture Note** to Applications. Workflow artifacts require GitHub login and expire after 30 days; a public permanent release can be published separately. A green build is required before treating a download as ready.
+
+On first launch, choose **모델 다운로드 및 시작**. The app downloads the pinned base model and your Korean lecture adapter, verifies them, and warms the Apple GPU. Cached Hugging Face files are reused. This step needs internet and several GB of disk space. Later transcription runs offline. **기록 / 샘플 먼저 보기** opens the library before setup. Use **파일 → 모델 설치 / 복구** to retry setup.
+
+This first build uses ad-hoc signing, **not Apple Developer ID signing or notarization**. macOS may require System Settings → Privacy & Security → Open Anyway after the first attempted launch. Do not disable Gatekeeper globally. A signed/notarized public release needs the developer's Apple signing credentials, which are not configured in this repository.
+
+The app keeps records under `~/Library/Application Support/Lecture Note/lectures`, outside the application bundle. Model selection is in `model.json` beside that directory; model weights remain in the Hugging Face cache. **파일 → 기존 강의 기록 가져오기…** imports the old project's `data/lectures` folder without replacing records with matching IDs. **파일 → 저장된 강의 폴더 열기** opens the backup location. Replacing the app does not remove notes. The source-code `.env` is separate from desktop settings.
+
+Ollama is still a separate optional installation for generative paragraph notes. **파일 → Ollama 다운로드** opens its official Mac download page. With Ollama running and `qwen2.5:3b` installed, paragraph notes use it; otherwise notes fall back to clearly labeled sentence extraction. This desktop package does not bundle an LLM or bypass microphone permissions.
+
+For developers building on an ARM Mac with Node 22+ and [uv](https://docs.astral.sh/uv/):
+
+```sh
+npm ci
+npm run desktop:python
+npm run desktop:build
+```
+
+Artifacts appear in `dist/`. The build checks Python relocation and packaged imports. `npm run desktop` is available for development after `npm run setup:qwen` has created `.venv-qwen`. Desktop setup stores its own configuration and may need to run once even if the CLI app was already configured.
+
 ## Start page and saved lectures
 
 Branch: **feature/lecture-library**, based on the Qwen3-ASR branch. Existing speech-model settings are preserved.

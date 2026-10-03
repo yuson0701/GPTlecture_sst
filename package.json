@@ -1,16 +1,77 @@
 {
   "name": "lecture-note",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node --env-file-if-exists=.env server.mjs",
     "test": "node --test",
-    "check": "node --check server.mjs && node --check local/transcriber.mjs && node --check local/summary.mjs && node --check public/app.js && node --check public/audio.js && node --check public/capture-worklet.js && node --check public/transcript.js && node --check public/streaming.js && node --check scripts/setup-realtime.mjs && node --check scripts/setup-qwen.mjs && node --check local/records.mjs",
+    "check": "node --check server.mjs && node --check local/transcriber.mjs && node --check local/summary.mjs && node --check public/app.js && node --check public/audio.js && node --check public/capture-worklet.js && node --check public/transcript.js && node --check public/streaming.js && node --check scripts/setup-realtime.mjs && node --check scripts/setup-qwen.mjs && node --check local/records.mjs && node --check desktop/main.mjs && node --check desktop/runtime.mjs && node --check desktop/preload.cjs && node --check desktop/setup.js && node --check desktop/bundle-python.mjs",
     "setup:realtime": "node scripts/setup-realtime.mjs",
-    "setup:qwen": "node scripts/setup-qwen.mjs"
+    "setup:qwen": "node scripts/setup-qwen.mjs",
+    "desktop": "electron .",
+    "desktop:python": "node desktop/bundle-python.mjs",
+    "desktop:build": "electron-builder --mac dmg zip --arm64 --publish never"
   },
   "engines": {
     "node": ">=22"
+  },
+  "description": "Private Korean lecture transcription and paragraph notes",
+  "author": "Lecture Note contributors",
+  "license": "UNLICENSED",
+  "main": "desktop/main.mjs",
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.lecturenote.desktop",
+    "productName": "Lecture Note",
+    "asar": false,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "desktop/main.mjs",
+      "desktop/runtime.mjs",
+      "desktop/preload.cjs",
+      "desktop/setup.html",
+      "desktop/setup.js",
+      "desktop/setup.css",
+      "desktop/setup_model.py",
+      "public/**/*",
+      "local/**/*",
+      "server.mjs",
+      "package.json",
+      "scripts/infer_qwen_adapter.py",
+      "scripts/train_qwen_lora.py",
+      "scripts/qwen_decode.py",
+      "!**/__pycache__/**",
+      "!**/*.pyc"
+    ],
+    "extraResources": [
+      {
+        "from": "build/python",
+        "to": "python"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.education",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "entitlements": "desktop/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "\uac15\uc758\ub97c \ubc1b\uc544\uc4f0\uae30 \uc704\ud574 \ub9c8\uc774\ud06c \uc811\uadfc\uc774 \ud544\uc694\ud569\ub2c8\ub2e4. \uc74c\uc131\uc740 \uc774 Mac\uc5d0\uc11c \ucc98\ub9ac\ub429\ub2c8\ub2e4."
+      },
+      "minimumSystemVersion": "15.0"
+    },
+    "dmg": {
+      "title": "Lecture Note \u2014 Apple Silicon"
+    },
+    "artifactName": "Lecture-Note-${version}-${arch}.${ext}"
   }
 }

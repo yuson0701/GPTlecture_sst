@@ -336,3 +336,5 @@ catch { error('서버에 연결할 수 없습니다. 새로고침해 주세요.'
 controls();
 
 await refreshLibrary();
+
+window.lectureCanLeave = () => mode === 'idle' && !summarizing && changeVersion === savedVersion && !queue?.items.length;
