@@ -1,0 +1,22 @@
+.env
+node_modules/
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+models/
+.env.before-realtime
+
+.venv-qwen/
+.env.before-qwen
+
+data/
+
+# Private ASR corpora, labels, alignment reports and model outputs.
+voiceinput_output/
+datasets/
+checkpoints/
+qwen3-asr-finetuning-out/
+
+# Generated official ChatGPT SDK
+vendor/siwc-local/dist/

@@ -1,0 +1,4 @@
+# Local Mac dataset preparation and acoustic validation; no training runtime.
+-r requirements-qwen-mac.txt
+# Required by Qwen3 ForcedAligner's Korean text tokenizer.
+soynlp==0.0.493

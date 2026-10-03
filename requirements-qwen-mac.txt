@@ -1,0 +1,7 @@
+# Reviewed MLX Audio revision; isolate from the existing Zipformer/Whisper environment.
+# Versions required by the published Korean lecture MLX LoRA adapter.
+mlx==0.32.3
+transformers==5.18.0
+huggingface-hub==1.33.0
+mlx-audio[stt] @ https://github.com/Blaizzy/mlx-audio/archive/94c7716212b2228f178d2f9c7619a591fd1b0b78.tar.gz
+faster-whisper>=1.2,<2
