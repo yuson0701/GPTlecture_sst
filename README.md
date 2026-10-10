@@ -21,6 +21,18 @@ Records live in **`data/lectures/` inside the project folder**, one JSON file pe
 
 Persistence QA: `CHROMIUM_BIN=/path/to/chromium python3 test/browser_library.py` runs an isolated server with temporary storage, saves records, restarts the server, reopens the notes, and tests failed-save recovery.
 
+## Lecture schedule and vocabulary hints
+
+Choose **새 강의 시작 → 시간표에서 강의 선택 → Excel 시간표 불러오기** and select your university `.xlsx` timetable (up to 2 MB). Filter by course, date, or lecture/instructor name, select a lecture, review the suggested terms, then click **제목·추천 용어 적용**. Edit **음성 인식에 사용할 용어** with terms from your slides before starting the recording; separate terms with commas or newlines.
+
+The importer reads the **전체** sheet and the columns **날짜, 교시, 과목명, 강의명, 교수님**. A workbook with only one sheet can use another sheet name. It ignores student assignment columns and does not duplicate entries from the course/weekly sheets. It preserves class periods rather than guessing clock times. Missing course names appear as **미분류**. Invalid imports leave the previous timetable intact.
+
+Suggestions combine the lecture title with locally authored Korean/English topic vocabulary. For example, a cardiac contraction lecture suggests `preload`, `afterload`, `cardiac output`, and their Korean equivalents. These are candidate hints, not words verified in your lecture materials. Edit them to fit the actual lecture. Terminology references: [NHLBI heart](https://www.nhlbi.nih.gov/health/heart/heart-beats), [NHLBI lungs](https://www.nhlbi.nih.gov/health/lungs), [NIDDK digestive diseases](https://www.niddk.nih.gov/health-information/digestive-diseases), [NCI dictionaries](https://www.cancer.gov/publications/dictionaries).
+
+The fine-tuned Qwen backend receives the edited list as `hotwords` on each audio chunk, including decode retries (up to 50 terms and 1,500 characters). This adds recognition context without retraining or changing the adapter. Accuracy improvement is not yet measured. Whisper uses its existing prompt path; Zipformer does not support these hints. The lecture selection and exact hints are saved with the recording and locked once it starts so recovered audio keeps the same context.
+
+The imported schedule is stored locally in Git-ignored `data/schedule.json`; the original workbook is not copied or uploaded to a cloud service. Import it once on each Mac, or copy that JSON file privately. Keep source workbooks outside the repository or under ignored `data/`. Python's standard library handles the import, so the Qwen environment needs no extra package. Optional: set `LECTURE_SCHEDULE_FILE` to another private local JSON path.
+
 ## Fine-tuned Qwen3-ASR for Korean on Apple Silicon
 
 The default Qwen setup uses **your Korean lecture LoRA adapter on Qwen3-ASR-1.7B (8-bit)**, running locally on the Apple GPU through MLX Audio. The adapter is hosted at [yuson0701/qwen3-asr-1.7b-korean-lecture-lora-mlx](https://huggingface.co/yuson0701/qwen3-asr-1.7b-korean-lecture-lora-mlx), a public Hugging Face model repository. The installer downloads the exact base revision and adapter revision together; the runtime validates both and never silently falls back to the base model.

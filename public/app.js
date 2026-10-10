@@ -1,4 +1,5 @@
 import { followLatest } from './follow-scroll.js';
+import { initLecturePicker } from './lecture-picker.js';
 import { sourceBatch, summaryDue, reportedUsage, usageTotals, blockMarkdown } from './notes.js';
 import { initChatGPT, summaryOptions, summaryReady, pauseChatGPT } from './chatgpt.js';
 import { Transcript, timestamp } from './transcript.js';
@@ -14,8 +15,15 @@ let qwen = false, streaming = false, streamingRows = new Map(), finalRows = 0, s
 const demoLines = ['오늘은 경제학의 기본 개념인 기회비용에 대해 알아보겠습니다. 기회비용은 어떤 선택을 했을 때 포기한 대안 중 가장 가치 있는 것의 가치입니다.', '예를 들어 두 시간 동안 아르바이트를 하면 2만 원을 벌 수 있지만, 그 시간에 시험 공부를 선택했다면 포기한 2만 원이 기회비용에 포함됩니다.', '여기서 중요한 것은 모든 대안의 가치를 더하는 것이 아니라, 포기한 대안 중 가장 좋은 하나만 고려한다는 점입니다.', '이미 지출해서 회수할 수 없는 비용은 매몰비용이라고 합니다. 합리적인 의사결정에서는 매몰비용보다 앞으로 발생할 비용과 편익을 비교해야 합니다.'];
 const demoParaphrases = ['기회비용은 선택 때문에 포기한 대안 중 가장 가치 있는 하나를 뜻합니다.', '공부 때문에 아르바이트를 하지 못했다면, 벌 수 있었던 2만 원이 기회비용에 포함됩니다.', '기회비용은 포기한 모든 대안의 합이 아니라, 가장 좋은 대안 하나의 가치입니다.', '매몰비용은 이미 써서 돌려받을 수 없는 돈입니다. 선택할 때는 앞으로의 비용과 이익을 비교해야 합니다.'];
 let recordId = null, revision = 0, changeVersion = 0, savedVersion = 0, saving = null, restoring = false, recordLoaded = false, uiBusy = false;
+const lecturePicker = initLecturePicker({
+  canEdit: () => mode === 'idle' && !uiBusy && !recordLoaded && !transcript.items.size,
+  onApply: (lecture, terms) => {
+    $('title').value = `${lecture.course} · ${lecture.title}`.slice(0, 120);
+    $('glossary').value = terms; lecturePicker.wordCount(); changed(); controls();
+  },
+});
 function changed() { if (recordId && !restoring) { changeVersion++; $('save-status').textContent = '저장 대기 중'; } }
-function snapshot() { return { revision, title: $('title').value, glossary: $('glossary').value, elapsed, state: mode, transcript: transcript.ordered(), blocks: summaryBlocks, summarized: [...summarized] }; }
+function snapshot() { return { revision, title: $('title').value, glossary: $('glossary').value, scheduleLecture: lecturePicker.snapshot(), elapsed, state: mode, transcript: transcript.ordered(), blocks: summaryBlocks, summarized: [...summarized] }; }
 async function saveRecord() {
   if (saving) return saving;
   if (!recordId || changeVersion === savedVersion) return true;
@@ -69,6 +77,7 @@ async function openRecord(id) {
     restoring = true; reset(); recordId = id; revision = data.revision; changeVersion = savedVersion = 0; recordLoaded = true;
     $('lecture-date').textContent = new Date(data.createdAt).toLocaleDateString('ko-KR');
     $('title').value = data.title; $('glossary').value = data.glossary; elapsed = data.elapsed;
+    lecturePicker.restore(data.scheduleLecture); lecturePicker.wordCount();
     data.transcript.forEach(item => transcript.set(item.id, item)); data.summarized.forEach(id => summarized.add(id));
     summaryBlocks = data.blocks.map(block => block.state === 'pending' ? { ...block, state: 'failed', warning: '정리 도중 종료된 문단입니다. 지금 정리로 다시 시도하세요.' } : block);
     render(); summaryBlocks.forEach(renderSummary); $('timer').textContent = timestamp(elapsed);
@@ -88,6 +97,7 @@ async function newLecture() {
   if (mode !== 'idle' || summarizing || !canReset() || !await flushRecord()) return false;
   recordId = null; revision = 0; changeVersion = savedVersion = 0; recordLoaded = false;
   reset(); $('lecture-date').textContent = new Date().toLocaleDateString('ko-KR'); $('title').value = ''; $('glossary').value = ''; $('save-status').textContent = '녹음을 시작하면 자동 저장됩니다';
+  lecturePicker.restore(null); lecturePicker.wordCount();
   $('save-retry').hidden = true; $('status').textContent = configured ? '시작할 준비가 됐어요' : '로컬 음성 모델 설치 필요';
   showWorkspace(true); controls(); $('title').focus(); return true;
 }
@@ -115,7 +125,8 @@ function controls() {
   $('demo').disabled = active || summarizing;
   $('stop').disabled = !['live', 'demo'].includes(mode);
   $('retry').hidden = !(queue?.failed || queue?.failures?.length) || mode !== 'idle';
-  $('title').disabled = active; $('glossary').disabled = active || streaming;
+  $('title').disabled = active; $('glossary').disabled = active || streaming || recordLoaded || !!transcript.items.size;
+  lecturePicker.locked(active || recordLoaded || !!transcript.items.size);
   $('export').disabled = !transcript.items.size;
   $('summarize').disabled = !summaryReady() || summarizing || mode === 'demo' || !pendingSummary().length;
   $('indicator').className = ['live', 'demo'].includes(mode) ? 'live' : '';
