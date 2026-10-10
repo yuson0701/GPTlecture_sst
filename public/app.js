@@ -11,7 +11,7 @@ const $ = id => document.getElementById(id);
 let transcript = new Transcript(), microphone, queue, timer, demoTimer, mode = 'idle', started = 0, elapsed = 0, summaryBlocks = [], configured = false, summarizing = false;
 const summarized = new Set();
 const follow = followLatest($('workspace'), () => !$('workspace').hidden && ['live', 'demo', 'stopping'].includes(mode));
-let lastSummaryAt = 0, silenceBoundary = null, lastInferenceSeconds = null;
+let silenceBoundary = null, lastInferenceSeconds = null;
 let qwen = false, streaming = false, streamingRows = new Map(), finalRows = 0, streamSession = null;
 const demoLines = ['오늘은 경제학의 기본 개념인 기회비용에 대해 알아보겠습니다. 기회비용은 어떤 선택을 했을 때 포기한 대안 중 가장 가치 있는 것의 가치입니다.', '예를 들어 두 시간 동안 아르바이트를 하면 2만 원을 벌 수 있지만, 그 시간에 시험 공부를 선택했다면 포기한 2만 원이 기회비용에 포함됩니다.', '여기서 중요한 것은 모든 대안의 가치를 더하는 것이 아니라, 포기한 대안 중 가장 좋은 하나만 고려한다는 점입니다.', '이미 지출해서 회수할 수 없는 비용은 매몰비용이라고 합니다. 합리적인 의사결정에서는 매몰비용보다 앞으로 발생할 비용과 편익을 비교해야 합니다.'];
 const demoParaphrases = ['기회비용은 선택 때문에 포기한 대안 중 가장 가치 있는 하나를 뜻합니다.', '공부 때문에 아르바이트를 하지 못했다면, 벌 수 있었던 2만 원이 기회비용에 포함됩니다.', '기회비용은 포기한 모든 대안의 합이 아니라, 가장 좋은 대안 하나의 가치입니다.', '매몰비용은 이미 써서 돌려받을 수 없는 돈입니다. 선택할 때는 앞으로의 비용과 이익을 비교해야 합니다.'];
@@ -128,7 +128,6 @@ for (const name of ['notes', 'script']) $(name + '-tab').onclick = () => {
   for (const tab of ['notes', 'script']) { $(tab + '-view').hidden = tab !== name; $(tab + '-tab').setAttribute('aria-pressed', String(tab === name)); }
 };
 function controls() {
-  renderUsage();
   updateLive();
   const active = mode !== 'idle' || uiBusy;
   $('start').disabled = active || !configured || summarizing || recordLoaded || transcript.items.size > 0;
@@ -197,13 +196,12 @@ function renderStreaming(events) {
   if (events.length) controls();
 }
 const summaryLabels = { chatgpt: 'ChatGPT · 문단별 요점과 바꿔쓰기', ollama: '문단 요약 · AI가 정리한 내용', extractive: '핵심 문장 추출 · 바꿔쓰기 아님', demo: '쉽게 풀어쓴 내용 · 샘플' };
-function renderUsage() {
+function usageText() {
   const u = usageTotals(summaryBlocks), format = n => n.toLocaleString('ko-KR');
-  $('token-total').textContent = `${u.unknown ? '확인된 ' : ''}${format(u.total_tokens)} 토큰`;
-  $('token-detail').textContent = `이 강의 · 입력 ${format(u.input_tokens)} / 출력 ${format(u.output_tokens)} · ${u.requests}회 요청${u.unknown ? ` · ${u.unknown}회 사용량 미확인` : ''}`;
+  return `${u.unknown ? '확인된 ' : ''}${format(u.total_tokens)} 토큰 · 입력 ${format(u.input_tokens)} / 출력 ${format(u.output_tokens)} · ${u.requests}회 요청${u.unknown ? ` · ${u.unknown}회 사용량 미확인` : ''}`;
 }
 function renderSummary(block) {
-  changed(); renderUsage();
+  changed();
   const target = $('summary');
   let card = target.querySelector(`[data-block="${block.id}"]`);
   if (!card) {
@@ -240,10 +238,10 @@ function reset() {
   queue?.storage?.db?.close();
   silenceBoundary = null; lastInferenceSeconds = null;
   transcript = new Transcript(); streamingRows = new Map(); finalRows = 0; streamSession = null; summarized.clear(); summaryBlocks = []; elapsed = 0; queue = null; $('latency').textContent = ''; error('');
-  $('summary').textContent = '강의 내용을 기다리고 있습니다.'; $('transcript').textContent = '말씀하시면 여기에 실시간 초안이 나타납니다. 조용할 때는 기다립니다.'; $('timer').textContent = '00:00'; $('count').textContent = '0개 구간'; $('summary-status').textContent = '1분 15초마다 또는 5초 이상 조용할 때 정리합니다';
+  $('summary').textContent = '강의 내용을 기다리고 있습니다.'; $('transcript').textContent = '말씀하시면 여기에 실시간 초안이 나타납니다. 조용할 때는 기다립니다.'; $('timer').textContent = '00:00'; $('count').textContent = '0개 구간'; $('summary-status').textContent = '';
 }
 function canReset() { return (queue instanceof LectureQueue && !queue.failed) || !queue?.items.length || window.confirm('아직 처리하지 못한 음성은 이 탭에만 있습니다. 이동하면 재시도할 수 없습니다. 계속할까요?'); }
-function clock() { follow.update(); started = Date.now(); lastSummaryAt = started; timer = setInterval(() => { elapsed = (Date.now() - started) / 1000; $('timer').textContent = timestamp(elapsed); }, 500); }
+function clock() { follow.update(); started = Date.now(); timer = setInterval(() => { elapsed = (Date.now() - started) / 1000; $('timer').textContent = timestamp(elapsed); }, 500); }
 function pendingSummary() {
   return transcript.ordered().filter(x => x.final && x.text && !x.failed).flatMap(item => {
     const parts = [];
@@ -262,7 +260,6 @@ async function summarize({ throughSeconds = Infinity } = {}) {
   }
   block.attempts ??= block.method === 'chatgpt' ? [null] : [];
   const attempt = block.attempts.push(null) - 1;
-  lastSummaryAt = Date.now();
   block.state = 'pending'; block.warning = ''; renderSummary(block);
   summarizing = true; controls(); $('summary-status').textContent = `블록 ${block.id} · 원문을 다듬고 요점을 정리하는 중…`;
   try {
@@ -288,13 +285,15 @@ async function autoSummarize() {
     const boundary = silenceBoundary;
     const pendingAudio = queue?.items.some(item => item.seconds <= boundary && (streaming || item.final !== false));
     if (pendingAudio) return;
-    if (pendingSummary().some(item => item.seconds <= boundary)) {
+    const pausedItems = sourceBatch(pendingSummary().filter(item => item.seconds <= boundary));
+    if (pausedItems.length && summaryDue(Date.now(), started + pausedItems[0].seconds * 1000, pausedItems, { paused: true })) {
       await summarize({ throughSeconds: boundary });
       return;
     }
     silenceBoundary = null;
   }
-  if (summaryDue(Date.now(), lastSummaryAt)) await summarize();
+  const items = sourceBatch(pendingSummary());
+  if (items.length && summaryDue(Date.now(), started + items[0].seconds * 1000, items)) await summarize();
 }
 function queueChanged() {
   const waiting = queue.waiting.length;
@@ -395,7 +394,7 @@ $('demo').onclick = async () => {
 $('summarize').onclick = () => void summarize();
 $('export').onclick = () => {
   const blocks = summaryBlocks.map(block => `### 블록 ${block.id} · ${timestamp(block.items[0].seconds)}\n\n원문\n${block.source}\n\n${block.cleaned ? '다듬은 문장 (AI 편집)\n' + block.cleaned + '\n\n' : ''}${summaryLabels[block.method] || '처리 중 / 재시도 필요'}\n${blockMarkdown(block)}${block.warning ? '\n' + block.warning : ''}`).join('\n\n');
-  const content = `# ${$('title').value || '강의 노트'}\n\n## 토큰 사용량\n${$('token-total').textContent} · ${$('token-detail').textContent}\n\n## 블록별 노트\n${blocks || '(요약 없음)'}\n\n## 전사\n${transcript.ordered().map(x => `[${timestamp(x.seconds)}] ${x.text || '(음성 없음)'}${x.final ? '' : ' [미확정 초안 / 재처리 필요]'}`).join('\n\n')}\n`;
+  const content = `# ${$('title').value || '강의 노트'}\n\n## 토큰 사용량\n${usageText()}\n\n## 블록별 노트\n${blocks || '(요약 없음)'}\n\n## 전사\n${transcript.ordered().map(x => `[${timestamp(x.seconds)}] ${x.text || '(음성 없음)'}${x.final ? '' : ' [미확정 초안 / 재처리 필요]'}`).join('\n\n')}\n`;
   const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' })); const a = document.createElement('a'); a.href = url; a.download = 'lecture-notes.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 setInterval(() => { void autoSummarize(); }, 1000);

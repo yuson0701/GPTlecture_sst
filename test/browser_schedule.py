@@ -37,8 +37,10 @@ with sync_playwright() as p:
     assert 'asthma' in page.locator('#glossary').input_value()
     page.clock.set_fixed_time(datetime(2026, 10, 13, 1, 40, tzinfo=timezone.utc))
     page.locator('#new-from-note').click()
-    expect(page.locator('#title')).to_have_value('')
-    expect(page.locator('#glossary')).to_have_value('')
+    expect(page.locator('#title')).to_have_value('호흡 · 천식')
+    assert 'asthma' in page.locator('#glossary').input_value()
+    expect(page.locator('.usage-strip')).to_have_count(0)
+    expect(page.locator('#summary-status')).to_have_text('')
     # Opening a saved record must not replace its lecture or edited terminology.
     saved_id = str(uuid.uuid4())
     saved = {'revision': 0, 'title': 'Saved first period', 'glossary': 'saved custom terms',

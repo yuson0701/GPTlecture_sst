@@ -7,15 +7,23 @@ import { publicChatGPTError } from '../local/chatgpt.mjs';
 import { validateRecord } from '../local/records.mjs';
 
 const usage = { input_tokens: 1200, output_tokens: 300, total_tokens: 1500 };
-test('automatic summaries wait 75 seconds from recording or the last manual request', () => {
-  const start = 100000;
-  assert.equal(summaryDue(start + 20000, start), false);
-  assert.equal(summaryDue(start + 74999, start), false);
-  assert.equal(summaryDue(start + 75000, start), true);
-  assert.equal(summaryDue(start + 90000, start + 60000), false);
-  const items = Array.from({ length: 90 }, (_, seconds) => ({ seconds, text: '강의 문장입니다.' }));
-  assert.equal(sourceBatch(items).length, 75);
-  assert.equal(sourceBatch(items.slice(75)).length, 15);
+test('automatic summaries prefer pauses and sentence endings, with a 90-second deadline', () => {
+  const start = 100000, sentence = [{ seconds: 0, text: '강의 내용을 설명합니다. '.repeat(12) }];
+  const fragment = [{ seconds: 0, text: '아직 설명이 이어지고 있어서 '.repeat(12) }];
+  assert.equal(summaryDue(start + 20000, start, sentence), false);
+  assert.equal(summaryDue(start + 59999, start, sentence), false);
+  assert.equal(summaryDue(start + 60000, start, sentence), true);
+  assert.equal(summaryDue(start + 60000, start, fragment), false);
+  assert.equal(summaryDue(start + 89999, start, fragment), false);
+  assert.equal(summaryDue(start + 90000, start, fragment), true);
+  assert.equal(summaryDue(start + 10000, start, sentence, { paused: true }), true);
+  assert.equal(summaryDue(start + 90000, start, [{ text: '네.' }], { paused: true }), false);
+  assert.equal(summaryDue(start + 90000, start, []), false);
+  // A long initial silence does not count as time spent explaining new content.
+  assert.equal(summaryDue(start + 120000, start + 100000, sentence), false);
+  const items = Array.from({ length: 120 }, (_, seconds) => ({ seconds, text: '강의 문장입니다.' }));
+  assert.equal(sourceBatch(items).length, 90);
+  assert.equal(sourceBatch(items.slice(90)).length, 30);
   assert.equal(sourceBatch(items.map(x => ({ ...x, text: '가'.repeat(3000) }))).length, 2);
 });
 

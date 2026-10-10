@@ -20,16 +20,19 @@ function periodStarts(value) {
   return starts;
 }
 export function nearestLecture(lectures, now = new Date()) {
-  const clock = seoulClock(now);
+  const time = now.getTime();
   // A multi-period lecture can match any of its periods. Equal distances prefer
   // the earlier start; equal starts retain timetable order.
   let chosen = null, distance = Infinity, start = Infinity;
   for (const lecture of lectures) {
-    if (lecture.date !== clock.date) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(lecture.date)) continue;
+    const midnight = Date.parse(`${lecture.date}T00:00:00+09:00`);
+    if (!Number.isFinite(midnight) || seoulClock(new Date(midnight)).date !== lecture.date) continue;
     for (const candidate of periodStarts(lecture.period)) {
-      const delta = Math.abs(candidate - clock.minutes);
-      if (delta < distance || (delta === distance && candidate < start)) {
-        chosen = lecture; distance = delta; start = candidate;
+      const timestamp = midnight + candidate * 60000;
+      const delta = Math.abs(timestamp - time);
+      if (delta < distance || (delta === distance && timestamp < start)) {
+        chosen = lecture; distance = delta; start = timestamp;
       }
     }
   }
@@ -62,7 +65,7 @@ export function initLecturePicker({ onApply, canEdit, canAutoApply = canEdit }) 
   }
   function showSelection(value) {
     active = value || null;
-    $('schedule-active').textContent = active ? `선택한 강의: ${label(active)}` : '오늘의 등록된 강의가 없습니다. 제목과 용어를 직접 입력하세요.';
+    $('schedule-active').textContent = active ? `선택한 강의: ${label(active)}` : '등록된 강의가 없습니다. 제목과 용어를 직접 입력하세요.';
     $('schedule-course').value = active && data.lectures.some(row => row.course === active.course) ? active.course : '';
     $('schedule-date').value = active?.date || seoulClock(new Date()).date;
     $('schedule-search').value = ''; filter();

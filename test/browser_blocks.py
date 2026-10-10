@@ -35,7 +35,7 @@ with sync_playwright() as p:
     # Wait through the old 20-second interval: no automatic request is allowed.
     page.wait_for_timeout(22000)
     assert not calls
-    # The first automatic block arrives at 75 seconds from recording start.
+    # The first automatic block arrives after a sentence ending at around 60 seconds of pending speech.
     expect(page.locator('.summary-block[aria-busy="true"]')).to_have_count(1, timeout=60000)
     page.locator('.summary-block details').first.evaluate('(el) => el.open = true')
     source = page.locator('.block-source').inner_text()
@@ -43,7 +43,7 @@ with sync_playwright() as p:
     page.wait_for_timeout(700)
     assert page.locator('.block-source').inner_text() == source
     held[0].fulfill(json={'summary': '첫 블록의 쉬운 설명입니다.', 'method': 'chatgpt', 'usage': {'input_tokens': 1200, 'output_tokens': 300, 'total_tokens': 1500}, 'sections': [{'title': '강의의 핵심 개념', 'bullets': ['첫 블록의 쉬운 설명입니다.']} ]})
-    expect(page.locator('#token-total')).to_have_text('1,500 토큰')
+    expect(page.locator('.usage-strip')).to_have_count(0)
     expect(page.locator('.summary-copy h3')).to_have_text('강의의 핵심 개념')
     expect(page.locator('.summary-copy li')).to_have_count(1)
     page.wait_for_timeout(1200)
@@ -56,8 +56,7 @@ with sync_playwright() as p:
     page.locator('#chatgpt-consent').check()
     page.locator('#summarize').click()
     expect(page.locator('.summary-copy').nth(1)).to_contain_text('현재 블록의 쉬운 설명입니다.')
-    expect(page.locator('#token-total')).to_have_text('확인된 1,500 토큰')
-    expect(page.locator('#token-detail')).to_contain_text('2회 사용량 미확인')
+    expect(page.locator('#token-total')).to_have_count(0)
     assert calls[1] == calls[2], 'Retry must retain exactly the original block'
     assert not set(calls[0]['transcript'].splitlines()) & set(calls[1]['transcript'].splitlines())
     assert all(c['previous'] == '' and c['block'] for c in calls)
@@ -68,6 +67,7 @@ with sync_playwright() as p:
         page.locator('#export').click()
     text = open(download.value.path()).read()
     assert source in text and '첫 블록의 쉬운 설명입니다.' in text
+    assert '1,500 토큰' in text and '사용량 미확인' in text
     page.set_viewport_size({'width': 390, 'height': 844})
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     page.locator('#script-tab').click()

@@ -1,4 +1,4 @@
-export const PARAPHRASE_SECONDS = 75;
+export const PARAPHRASE_SECONDS = 90;
 
 export function reportedUsage(value) {
   if (!value || !['input_tokens', 'output_tokens', 'total_tokens'].every(k => Number.isSafeInteger(value[k]) && value[k] >= 0) || value.input_tokens + value.output_tokens !== value.total_tokens) return null;
@@ -22,7 +22,12 @@ export function sourceBatch(items) {
   }
   return batch;
 }
-export function summaryDue(now, lastRequest) { return now - lastRequest >= PARAPHRASE_SECONDS * 1000; }
+export function summaryDue(now, firstPendingAt, items, { paused = false } = {}) {
+  if (!items.length || items.reduce((n, item) => n + item.text.replace(/\s/g, '').length, 0) < 80) return false;
+  const age = now - firstPendingAt;
+  const sentenceEnd = /[.!?。！？][”’"')\]]*$/.test(items.at(-1).text.trim());
+  return paused || age >= PARAPHRASE_SECONDS * 1000 || (age >= 60000 && sentenceEnd);
+}
 
 export function validSections(sections) {
   const text = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
