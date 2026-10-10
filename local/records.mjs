@@ -8,6 +8,8 @@ const text = (x, max) => typeof x === 'string' && x.length <= max;
 const seconds = x => Number.isFinite(x) && x >= 0;
 export function validateRecord(value) {
   if (!value || !Number.isSafeInteger(value.revision) || value.revision < 0 || !text(value.title, 120) || !text(value.glossary, 1500) || !seconds(value.elapsed) || !['idle', 'connecting', 'live', 'stopping', 'demo'].includes(value.state)) throw fail('Invalid lecture metadata');
+  if (value.sttModel != null && !['qwen', 'whisper', 'sherpa'].includes(value.sttModel)) throw fail('Invalid speech model');
+  if (value.recognitionLanguage != null && !['auto', 'ko', 'en'].includes(value.recognitionLanguage)) throw fail('Invalid recognition language');
   const selection = value.scheduleLecture;
   if (selection != null && (!text(selection.id, 24) || !/^[a-f0-9]{24}$/.test(selection.id) ||
       !text(selection.date, 10) || !/^\d{4}-\d{2}-\d{2}$/.test(selection.date) || !text(selection.period, 40) ||
@@ -19,7 +21,7 @@ export function validateRecord(value) {
   if (value.blocks.some(x => (x.sections !== undefined && !validSections(x.sections)) || (x.attempts !== undefined && (!Array.isArray(x.attempts) || x.attempts.length > 1000 || x.attempts.some(u => u !== null && !reportedUsage(u)))))) throw fail('Invalid note sections or token usage');
   if (new Set(value.blocks.map(x => x.id)).size !== value.blocks.length) throw fail('Duplicate block IDs');
   // Copy only the record fields; audio and client timestamps are never stored.
-  return { title: value.title, glossary: value.glossary,
+  return { title: value.title, glossary: value.glossary, sttModel: value.sttModel ?? null, recognitionLanguage: value.recognitionLanguage ?? null,
     scheduleLecture: selection == null ? null : Object.fromEntries(['id', 'date', 'period', 'course', 'title', 'professor'].map(key => [key, selection[key]])),
     elapsed: value.elapsed, state: value.state, transcript: value.transcript.map(x => ({ id: x.id, text: x.text, seconds: x.seconds, final: x.final, failed: x.failed === true })),
     blocks: value.blocks.map(x => ({ id: x.id, source: x.source, state: x.state,

@@ -51,6 +51,20 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0][1]['local_files_only'])
 
+    def test_mixed_language_whisper_is_transcription_not_translation(self):
+        for language, expected in [('auto', None), ('ko', 'ko'), ('en', 'en')]:
+            calls = []
+            def transcribe(samples, **options):
+                calls.append(options)
+                return iter([types.SimpleNamespace(text='ECG 활동전위')]), None
+            worker.model = types.SimpleNamespace(transcribe=transcribe)
+            result = worker.dispatch({'action': 'transcribe', 'language': language,
+                                     'audio': base64.b64encode(b'\x00\x40' * 16000).decode(), 'glossary': 'ECG'})
+            self.assertEqual(result['text'], 'ECG 활동전위')
+            self.assertEqual(calls[0]['language'], expected)
+            self.assertEqual(calls[0]['task'], 'transcribe')
+            self.assertEqual(calls[0]['initial_prompt'], 'ECG')
+
     def test_bad_audio_is_rejected(self):
         worker.model = object()
         with self.assertRaises(ValueError):

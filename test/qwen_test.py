@@ -152,6 +152,14 @@ class QwenTests(unittest.TestCase):
         self.assertTrue(all(c.kwargs['system_prompt'] == MIXED_LANGUAGE_PROMPT for c in calls))
         self.assertTrue(all(c.kwargs['hotwords'] == ['ECG'] for c in calls))
 
+    def test_explicit_language_selection_reaches_qwen(self):
+        for language, expected in [('ko', 'Korean'), ('en', 'English'), ('auto', None)]:
+            model = self.recognizer()
+            model.transcribe(np.ones(16000), 'ECG', language=language)
+            self.assertEqual(model.model.generate.call_args.kwargs['language'], expected)
+        with self.assertRaises(ValueError):
+            model.transcribe(np.ones(16000), language='unsupported')
+
     def test_silence_never_generates_text(self):
         model = self.recognizer()
         model.vad.return_value = []

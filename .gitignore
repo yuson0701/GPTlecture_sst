@@ -20,3 +20,6 @@ qwen3-asr-finetuning-out/
 
 # Generated official ChatGPT SDK
 vendor/siwc-local/dist/
+
+.venv-whisper/
+.env.before-whisper

@@ -45,6 +45,10 @@ def validate_platform():
 def dispatch(request):
     global model
     engine = backend()
+    language = request.get('language', 'auto' if engine == 'qwen-mlx' else 'ko')
+    if language not in ('auto', 'ko', 'en'):
+        raise ValueError('Invalid recognition language')
+    whisper_language = None if language == 'auto' else language
     if engine == 'qwen-mlx':
         from qwen_asr import QwenRecognizer, status
         if request.get('action') == 'status':
@@ -60,7 +64,7 @@ def dispatch(request):
             audio = base64.b64decode(request['audio'], validate=True)
             if not 3200 <= len(audio) <= 256000 or len(audio) % 2:
                 raise ValueError('Invalid Qwen PCM')
-            return model.transcribe(np.frombuffer(audio, dtype='<i2').astype(np.float32) / 32768, request.get('glossary', ''))
+            return model.transcribe(np.frombuffer(audio, dtype='<i2').astype(np.float32) / 32768, request.get('glossary', ''), language=language)
     if engine == 'sherpa':
         from streaming import StreamingRecognizer, available
         if request.get('action') == 'status':
@@ -126,12 +130,12 @@ def dispatch(request):
         # MLX Whisper has no standalone VAD; reuse local Silero to reject non-speech.
         if not get_speech_timestamps(samples, VadOptions(min_silence_duration_ms=300)):
             return {'text': ''}
-        result = mlx_whisper.transcribe(samples, path_or_hf_repo=model, language='ko', temperature=0.0,
+        result = mlx_whisper.transcribe(samples, path_or_hf_repo=model, language=whisper_language, task='transcribe', temperature=0.0,
                                         initial_prompt=request.get('glossary') or None,
                                         condition_on_previous_text=False, without_timestamps=True, verbose=None)
         return {'text': result['text'].strip()}
     segments, _ = model.transcribe(
-        samples, language='ko', beam_size=1, best_of=1, temperature=0.0,
+        samples, language=whisper_language, task='transcribe', beam_size=1, best_of=1, temperature=0.0,
         without_timestamps=True, vad_filter=True,
         vad_parameters={'min_silence_duration_ms': 300},
         initial_prompt=request.get('glossary') or None,

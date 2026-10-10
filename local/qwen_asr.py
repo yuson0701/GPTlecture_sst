@@ -8,6 +8,7 @@ import re
 import sys
 import time
 from types import SimpleNamespace
+from dataclasses import replace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from infer_qwen_adapter import load_portable_adapter, validate_package
@@ -118,7 +119,10 @@ class QwenRecognizer:
         self.model.generate(np.zeros(16000, dtype=np.float32), language='Korean', max_tokens=8, verbose=False)
         mx.clear_cache()
 
-    def transcribe(self, samples, glossary=''):
+    def transcribe(self, samples, glossary='', language='auto'):
+        if language not in ('auto', 'ko', 'en'):
+            raise ValueError('Invalid recognition language')
+        policy = replace(LIVE_POLICY, language={'auto': None, 'ko': 'Korean', 'en': 'English'}[language])
         if not 1600 <= len(samples) <= 16000 * 8:
             raise ValueError('Qwen audio window must be 0.1–8 seconds')
         started = time.perf_counter()
@@ -129,7 +133,7 @@ class QwenRecognizer:
             prompted = SimpleNamespace(generate=lambda audio, **kwargs:
                                        self.model.generate(audio, **kwargs, hotwords=terms,
                                                            system_prompt=MIXED_LANGUAGE_PROMPT))
-            decoded = decode_audio(prompted, samples, policy=LIVE_POLICY,
+            decoded = decode_audio(prompted, samples, policy=policy,
                                    after_attempt=self.mx.clear_cache)
             if decoded['unresolved']:
                 raise RuntimeError('음성 인식이 반복 또는 길이 제한에 도달했습니다. 이 구간은 재시도가 필요합니다.')

@@ -1,3 +1,4 @@
+import { initSpeechChoice } from './speech-choice.js';
 import { followLatest } from './follow-scroll.js';
 import { initLecturePicker } from './lecture-picker.js';
 import { sourceBatch, summaryDue, reportedUsage, usageTotals, blockMarkdown } from './notes.js';
@@ -22,8 +23,15 @@ const lecturePicker = initLecturePicker({
     $('glossary').value = terms; lecturePicker.wordCount(); changed(); controls();
   },
 });
+const speechChoice = initSpeechChoice(config => {
+  configured = config.configured; streaming = !!config.streaming; qwen = config.backend === 'qwen-mlx';
+  $('model').textContent = config.model;
+  $('notice').textContent = '선택한 음성 모델은 이 컴퓨터에서만 실행됩니다. 강의별 모델과 인식 언어를 저장하며, 요약은 기존 ChatGPT 설정을 사용합니다.';
+  if (mode === 'idle' && !recordLoaded) $('status').textContent = configured ? '시작할 준비가 됐어요' : '음성 모델 설치 또는 선택 필요';
+  changed(); controls();
+});
 function changed() { if (recordId && !restoring) { changeVersion++; $('save-status').textContent = '저장 대기 중'; } }
-function snapshot() { return { revision, title: $('title').value, glossary: $('glossary').value, scheduleLecture: lecturePicker.snapshot(), elapsed, state: mode, transcript: transcript.ordered(), blocks: summaryBlocks, summarized: [...summarized] }; }
+function snapshot() { return { ...speechChoice.snapshot(), revision, title: $('title').value, glossary: $('glossary').value, scheduleLecture: lecturePicker.snapshot(), elapsed, state: mode, transcript: transcript.ordered(), blocks: summaryBlocks, summarized: [...summarized] }; }
 async function saveRecord() {
   if (saving) return saving;
   if (!recordId || changeVersion === savedVersion) return true;
@@ -77,6 +85,7 @@ async function openRecord(id) {
     restoring = true; reset(); recordId = id; revision = data.revision; changeVersion = savedVersion = 0; recordLoaded = true;
     $('lecture-date').textContent = new Date(data.createdAt).toLocaleDateString('ko-KR');
     $('title').value = data.title; $('glossary').value = data.glossary; elapsed = data.elapsed;
+    speechChoice.restore(data);
     lecturePicker.restore(data.scheduleLecture); lecturePicker.wordCount();
     data.transcript.forEach(item => transcript.set(item.id, item)); data.summarized.forEach(id => summarized.add(id));
     summaryBlocks = data.blocks.map(block => block.state === 'pending' ? { ...block, state: 'failed', warning: '정리 도중 종료된 문단입니다. 지금 정리로 다시 시도하세요.' } : block);
@@ -97,6 +106,7 @@ async function newLecture() {
   if (mode !== 'idle' || summarizing || !canReset() || !await flushRecord()) return false;
   recordId = null; revision = 0; changeVersion = savedVersion = 0; recordLoaded = false;
   reset(); $('lecture-date').textContent = new Date().toLocaleDateString('ko-KR'); $('title').value = ''; $('glossary').value = ''; $('save-status').textContent = '녹음을 시작하면 자동 저장됩니다';
+  speechChoice.newLecture();
   lecturePicker.restore(null); lecturePicker.wordCount();
   $('save-retry').hidden = true; $('status').textContent = configured ? '시작할 준비가 됐어요' : '로컬 음성 모델 설치 필요';
   showWorkspace(true); controls(); $('title').focus(); return true;
@@ -107,7 +117,7 @@ $('home').onclick = async () => { if (mode !== 'idle' || summarizing || !canRese
 $('save-retry').onclick = () => void flushRecord();
 $('title').addEventListener('input', changed); $('glossary').addEventListener('input', changed);
 setInterval(() => { if (recordId && mode !== 'idle') changed(); void saveRecord(); }, 2000);
-function error(message) { if (message) { $('settings-panel').hidden = false; $('settings-toggle').setAttribute('aria-expanded', 'true'); } $('error').textContent = message; $('error').hidden = !message; }
+function error(message) { $('error').textContent = message; $('error').hidden = !message; }
 function updateLive() {
   const pending = transcript.ordered().filter(x => !x.failed && (!x.final || !summarized.has(`${x.id}:0`)));
   const text = pending.map(x => x.text).join(' ') || (transcript.items.size ? '다음 말씀을 기다리고 있습니다.' : '강의를 시작하면 여기에 말씀이 나타납니다.');
@@ -124,6 +134,8 @@ function controls() {
   $('new-lecture').disabled = active || summarizing; $('home').disabled = active || summarizing; $('new-from-note').disabled = active || summarizing;
   $('demo').disabled = active || summarizing;
   $('stop').disabled = !['live', 'demo'].includes(mode);
+  speechChoice.lock(active || ((recordLoaded || transcript.items.size > 0) && !speechChoice.needsSelection()), active);
+  $('retry').disabled = !configured || speechChoice.needsSelection();
   $('retry').hidden = !(queue?.failed || queue?.failures?.length) || mode !== 'idle';
   $('title').disabled = active; $('glossary').disabled = active || streaming || recordLoaded || !!transcript.items.size;
   lecturePicker.locked(active || recordLoaded || !!transcript.items.size);
@@ -217,11 +229,13 @@ function renderSummary(block) {
   card.querySelector('.cleaned-source').hidden = !block.cleaned;
   card.setAttribute('aria-busy', String(block.state === 'pending'));
   card.querySelector('.block-status').textContent = block.state === 'pending' ? '주제별 요점을 정리하는 중…' : block.state === 'failed' ? '처리 실패 · 지금 정리로 재시도' : `${timestamp(block.items[0].seconds)} · ${summaryLabels[block.method] || '저장된 노트'}`;
+  card.querySelector('.block-status').hidden = block.state !== 'pending' && block.state !== 'failed';
   card.querySelector('.block-warning').textContent = block.warning || '';
   card.querySelector('.block-warning').hidden = !block.warning;
 }
 function reset() {
   follow.reset();
+  $('lecture-options').open = false;
   queue?.storage?.db?.close();
   silenceBoundary = null; lastInferenceSeconds = null;
   transcript = new Transcript(); streamingRows = new Map(); finalRows = 0; streamSession = null; summarized.clear(); summaryBlocks = []; elapsed = 0; queue = null; $('latency').textContent = ''; error('');
@@ -284,7 +298,7 @@ async function autoSummarize() {
 function queueChanged() {
   const waiting = queue.waiting.length;
   if (mode === 'live') $('status').textContent = waiting ? `듣는 중 · ${waiting}개 대기${!streaming ? ' · 확정 전사 우선' : ''}` : '강의를 듣고 있어요';
-  if (qwen && lastInferenceSeconds !== null) $('latency').textContent = `인식 요청 ${lastInferenceSeconds.toFixed(1)}초 · 대기 ${waiting}개`;
+  if (!streaming && lastInferenceSeconds !== null) $('latency').textContent = `인식 요청 ${lastInferenceSeconds.toFixed(1)}초 · 대기 ${waiting}개`;
   if (queue.failed) {
     error(`${queue.failed.message} 저장소 또는 연결을 확인한 뒤 처리 재시도를 눌러 주세요.`);
     if (mode === 'live') void stopLecture();
@@ -298,7 +312,7 @@ function queueChanged() {
 function makeLectureQueue(storage, glossary) {
   return new LectureQueue(async chunk => {
     let result; const requestStarted = performance.now();
-    try { result = await api('/api/transcribe', { audio: chunk.audio, glossary, final: chunk.final }); }
+    try { result = await api('/api/transcribe', { ...speechChoice.request(), ...(chunk.sttModel ? { sttModel: chunk.sttModel, language: chunk.language } : {}), audio: chunk.audio, glossary, final: chunk.final }); }
     catch (failure) {
       if (chunk.final) {
         transcript.set(chunk.id, { seconds: chunk.seconds, text: '[인식 실패 · 보관한 음성으로 재시도 가능]', final: false, failed: true });
@@ -306,7 +320,7 @@ function makeLectureQueue(storage, glossary) {
       }
       throw failure;
     }
-    if (qwen) lastInferenceSeconds = (performance.now() - requestStarted) / 1000;
+    if (!streaming) lastInferenceSeconds = (performance.now() - requestStarted) / 1000;
     const previous = transcript.ordered().filter(x => x.final && !x.failed && x.seconds < chunk.seconds).at(-1)?.text || '';
     const text = chunk.overlap ? removeOverlap(previous, result.text) : result.text;
     if (text.trim()) transcript.set(chunk.id, { seconds: chunk.seconds, text, final: chunk.final, failed: false });
@@ -318,7 +332,7 @@ function makeLectureQueue(storage, glossary) {
 }
 function enqueue(chunk) {
   const id = chunk.id || `packet-${chunk.sequence}`;
-  if (!queue.enqueue({ ...chunk, id })) {
+  if (!queue.enqueue({ ...speechChoice.request(), ...chunk, id })) {
     transcript.set(id, { seconds: chunk.seconds, text: '[처리 지연으로 이 구간을 저장하지 못했습니다]', final: true, failed: true });
     error('처리 대기가 임시 음성 보관 한도에 도달했습니다. 녹음을 멈추고 보관된 구간을 처리합니다. 보관하지 못한 구간은 원문에 표시됩니다.');
     render();
@@ -332,11 +346,11 @@ $('start').onclick = async () => {
   try {
     if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) throw new Error('Chrome 또는 Edge에서 localhost로 접속해 주세요.');
     // Load the model before recording so initial model load cannot lose lecture audio.
-    const session = await api('/api/session', { glossary: $('glossary').value });
+    const session = await api('/api/session', { ...speechChoice.request(), glossary: $('glossary').value });
     streamSession = session.session;
     const glossary = $('glossary').value;
     if (streaming) queue = new StreamingQueue(async chunk => {
-      const result = await api('/api/transcribe', { audio: chunk.audio, glossary, final: chunk.final, session: streamSession, sequence: chunk.sequence });
+      const result = await api('/api/transcribe', { ...speechChoice.request(), audio: chunk.audio, glossary, final: chunk.final, session: streamSession, sequence: chunk.sequence });
       renderStreaming(result.events || []);
       const packetDelay = (performance.now() - chunk.capturedAt) / 1000;
       $('latency').textContent = `처리 ${Math.round(result.inferenceMs || 0)} ms · 전송/대기 ${packetDelay.toFixed(1)}초`;
@@ -395,8 +409,9 @@ for (const id of ['start', 'stop', 'new-lecture', 'new-from-note', 'home', 'demo
 }
 $('settings-toggle').onclick = () => { const panel = $('settings-panel'); panel.hidden = !panel.hidden; $('settings-toggle').setAttribute('aria-expanded', String(!panel.hidden)); };
 initChatGPT(controls);
-try { const response = await fetch('/api/config'); const config = await response.json(); configured = config.configured; streaming = Boolean(config.streaming); qwen = config.backend === 'qwen-mlx'; $('glossary').placeholder = streaming ? '스트리밍 모드에서는 전공 용어 힌트를 지원하지 않습니다' : $('glossary').placeholder; $('model').textContent = config.model; $('status').textContent = configured ? '시작할 준비가 됐어요' : '로컬 음성 모델 설치 필요'; $('notice').textContent = configured ? 'API 키 없이 이 컴퓨터에서 강의를 받아씁니다. 녹음 전 강의 정책과 동의를 확인하세요.' : qwen ? 'Qwen3-ASR 설치가 필요합니다. Apple Silicon Mac에서 npm run setup:qwen을 실행하고 서버를 다시 시작하세요.' : config.reason === 'platform' ? 'MLX는 Apple Silicon Mac과 ARM Python이 필요합니다. 다른 컴퓨터에서는 WHISPER_BACKEND=faster-whisper를 사용하세요.' : config.reason === 'model' ? streaming ? '스트리밍 모델 설치가 필요합니다: npm run setup:realtime. 설치 후 서버를 재시작하세요.' : '음성 모델 파일이 없습니다. README의 모델 다운로드 단계를 완료한 뒤 새로고침하세요. 샘플 강의는 바로 체험할 수 있습니다.' : '음성 엔진을 설치하세요. 실시간 모드: npm run setup:realtime. 샘플 강의는 바로 체험할 수 있습니다.'; }
+try { const response = await fetch('/api/config'); const config = await response.json(); speechChoice.load(config); configured = config.configured; streaming = Boolean(config.streaming); qwen = config.backend === 'qwen-mlx'; $('glossary').placeholder = streaming ? '스트리밍 모드에서는 전공 용어 힌트를 지원하지 않습니다' : $('glossary').placeholder; $('model').textContent = config.model; $('status').textContent = configured ? '시작할 준비가 됐어요' : '로컬 음성 모델 설치 필요'; $('notice').textContent = configured ? 'API 키 없이 이 컴퓨터에서 강의를 받아씁니다. 녹음 전 강의 정책과 동의를 확인하세요.' : qwen ? 'Qwen3-ASR 설치가 필요합니다. Apple Silicon Mac에서 npm run setup:qwen을 실행하고 서버를 다시 시작하세요.' : config.reason === 'platform' ? 'MLX는 Apple Silicon Mac과 ARM Python이 필요합니다. 다른 컴퓨터에서는 WHISPER_BACKEND=faster-whisper를 사용하세요.' : config.reason === 'model' ? streaming ? '스트리밍 모델 설치가 필요합니다: npm run setup:realtime. 설치 후 서버를 재시작하세요.' : '음성 모델 파일이 없습니다. README의 모델 다운로드 단계를 완료한 뒤 새로고침하세요. 샘플 강의는 바로 체험할 수 있습니다.' : '음성 엔진을 설치하세요. 실시간 모드: npm run setup:realtime. 샘플 강의는 바로 체험할 수 있습니다.'; }
 catch { error('서버에 연결할 수 없습니다. 새로고침해 주세요.'); $('status').textContent = '서버 연결 실패'; }
+if (!$('speech-choice').hidden) speechChoice.newLecture();
 controls();
 
 await refreshLibrary();

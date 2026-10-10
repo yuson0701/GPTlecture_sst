@@ -17,7 +17,7 @@ export class LocalTranscriber {
       clearTimeout(item.timer); this.pending.delete(message.id);
       if (message.error) item.reject(new Error(message.error)); else item.resolve(message.result);
     });
-    const failed = () => { if (this.child !== child) return; this.child = null; this.rejectAll('Python 음성 처리기가 종료되었습니다. Python 설치 및 로컬 모델 설정을 확인하세요.'); };
+    const failed = () => { if (this.child !== child) return; this.close('Python 음성 처리기가 종료되었습니다. Python 설치 및 로컬 모델 설정을 확인하세요.'); };
     child.on('error', failed); child.on('exit', failed); child.stdin.on('error', failed);
   }
   rejectAll(message) { for (const item of this.pending.values()) { clearTimeout(item.timer); item.reject(new Error(message)); } this.pending.clear(); }
@@ -30,5 +30,14 @@ export class LocalTranscriber {
       this.child.stdin.write(JSON.stringify({ ...data, action, id }) + '\n');
     });
   }
-  close(message = '로컬 음성 처리기가 종료되었습니다.') { const child = this.child; this.child = null; this.rejectAll(message); child?.kill(); }
+  close(message = '로컬 음성 처리기가 종료되었습니다.') {
+    const child = this.child; this.child = null; this.rejectAll(message);
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    this.exitPromise = new Promise(resolve => {
+      const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
+      const finish = () => { clearTimeout(timer); resolve(); };
+      child.once('exit', finish); child.once('error', finish); child.kill();
+    });
+  }
+  async shutdown() { this.close(); await this.exitPromise; }
 }

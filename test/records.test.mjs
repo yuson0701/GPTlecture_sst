@@ -70,3 +70,14 @@ test('record API requires same-origin writes and does not expose the data direct
   assert.equal((await fetch(base + '/data/lectures/' + id + '.json')).status, 404);
   assert.equal((await fetch(base + '/api/records', { headers: { Origin: 'https://other.example' } })).status, 403);
 });
+
+test('recorded model and language survive reload; legacy notes remain unidentified', async t => {
+  const store = new RecordStore(await directory(t)), id = randomUUID();
+  await store.save(id, { ...record(), sttModel: 'whisper', recognitionLanguage: 'auto' });
+  const saved = await store.get(id);
+  assert.equal(saved.sttModel, 'whisper'); assert.equal(saved.recognitionLanguage, 'auto');
+  assert.throws(() => store.save(id, { ...record(), sttModel: '../model' }), /Invalid speech model/);
+  assert.throws(() => store.save(id, { ...record(), recognitionLanguage: 'xx' }), /Invalid recognition language/);
+  const old = randomUUID(); await store.save(old, record());
+  assert.equal((await store.get(old)).sttModel, null);
+});

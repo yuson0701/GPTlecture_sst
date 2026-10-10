@@ -1,14 +1,60 @@
 # Lecture Note — Korean lecture transcription
 
+## Choose Qwen or Whisper for each lecture
+
+This version preserves the timetable picker and course vocabulary changes from
+commit `c346313`. Before recording, use **음성 모델** above the timetable to choose
+**Qwen3-ASR · 내 강의 모델** or **Whisper · Apple GPU**. Use **인식 언어** to choose
+automatic Korean/English detection, Korean, or English. Both engines transcribe
+locally; this does not enable an OpenAI transcription API or Ollama.
+
+On your Apple Silicon Mac, keep your existing Qwen installation and add Whisper:
+
+```sh
+npm run setup:whisper
+npm start
+```
+
+Stop a running server before restarting it, then refresh the browser. The installer
+uses `.venv-whisper`, downloads `mlx-community/whisper-turbo`, verifies GPU loading,
+and saves only Whisper-specific settings. It leaves Qwen paths, adapter settings,
+and `PYTHON_BIN` intact. Initial installation requires internet; lecture recognition
+uses cached weights only. If Qwen is not installed, run `npm run setup:qwen`.
+Unavailable choices show their setup command; **설치 상태 새로고침** checks again.
+Find this button under **설정 → 음성 인식 · 저장 정보**. The main screen keeps the
+recording controls and model choice visible. Expand **시간표 · 전공 용어** for course
+selection and vocabulary, or the token total for usage details. Errors remain visible
+without opening settings.
+
+The model and language are fixed during a lecture, saved in its record, and attached
+to pending audio clips. Reopening a record restores those settings for retry; old
+records without model metadata require an explicit model choice. Your last selection
+is remembered for the next new lecture. Only one recognition model is loaded at a
+time: switching waits for the old Python process to exit before loading the next.
+This is a choice of engines, not simultaneous dual-model transcription or automatic
+fallback. Switching does not retranscribe successful old segments, whose audio was
+already removed by recovery storage. No accuracy advantage is claimed without a
+comparison on your own recordings.
+
+### Ideas adapted from meeting-transcriber
+
+Reviewed [Recap / meeting-transcriber](https://github.com/notadev-iamaura/meeting-transcriber):
+its local model selection, setup-readiness feedback, job-specific model snapshots,
+and sequential model loading informed this implementation. The implementation here
+is original; no upstream source files or dependencies are copied. Existing vocabulary
+hints are passed to both Qwen and Whisper. Recap's offline batch cooldowns, local LLMs,
+cloud STT, and aggressive repetition deletion are not enabled in this live lecture
+app. Its small meeting benchmarks do not establish accuracy on these lectures.
+
 Local Korean speech recognition and lecture notes, with no API key or cloud speech service.
 
 ## Start page and saved lectures
 
-Branch: **feature/chatgpt-paraphrases**, based on the saved-lecture branch. Existing speech-model settings are preserved.
+Branch: **feature/local-model-choice**, based on the latest lecture recovery and timetable changes. Existing speech-model settings are preserved.
 
 ```sh
 git fetch origin
-git switch feature/chatgpt-paraphrases
+git switch feature/local-model-choice
 npm ci
 npm start
 ```
