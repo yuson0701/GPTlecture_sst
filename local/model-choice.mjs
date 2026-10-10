@@ -19,8 +19,8 @@ export class ModelTranscriber {
       return override || (legacy ? env.PYTHON_BIN : undefined) || (existsSync(local) ? local : undefined);
     };
     this.models = [
-      { id: 'qwen', backend: 'qwen-mlx', label: env.QWEN_ASR_ADAPTER === 'none' ? 'Qwen3-ASR · 기본 모델 · Apple GPU' : 'Qwen3-ASR · 내 강의 모델 · Apple GPU', setup: 'npm run setup:qwen', python: python('qwen', old === 'qwen-mlx') },
-      { id: 'whisper', backend: whisper, label: `Whisper · ${whisper === 'mlx' ? 'Apple GPU' : 'faster-whisper'} · ${(whisper === 'mlx' ? env.MLX_WHISPER_MODEL : env.WHISPER_MODEL)?.split('/').at(-1) || 'large-v3-turbo'}`, setup: 'npm run setup:whisper', python: python('whisper', ['mlx', 'faster-whisper'].includes(old)) },
+      { id: 'qwen', backend: 'qwen-mlx', label: env.QWEN_ASR_ADAPTER === 'none' ? 'Qwen3-ASR · 기본 모델' : 'Qwen3-ASR · 내 강의 모델', setup: 'npm run setup:qwen', python: python('qwen', old === 'qwen-mlx') },
+      { id: 'whisper', backend: whisper, label: `Whisper · ${whisper === 'mlx' ? 'Apple GPU' : 'faster-whisper'}`, setup: 'npm run setup:whisper', python: python('whisper', ['mlx', 'faster-whisper'].includes(old)) },
     ];
     if (old === 'sherpa') this.models.push({ id: 'sherpa', backend: 'sherpa', label: 'Korean Zipformer · 기존 설정', setup: 'npm run setup:realtime', python: env.PYTHON_BIN });
   }
