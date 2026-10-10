@@ -3,11 +3,12 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { LocalTranscriber } from './local/transcriber.mjs';
 import { RecordStore } from './local/records.mjs';
+import { ScheduleStore } from './local/schedule.mjs';
 import { chatgptSummary } from './local/summary.mjs';
 import { createChatGPTService, publicChatGPTError } from './local/chatgpt.mjs';
 
-const files = new Map([['/', ['index.html', 'text/html']], ...['app.js', 'notes.js', 'chatgpt.js', 'transcript.js', 'audio.js', 'capture-worklet.js', 'streaming.js'].map(file => ['/' + file, [file, 'text/javascript']]), ['/style.css', ['style.css', 'text/css']]]);
-export function createApp({ env = process.env, transcriber = new LocalTranscriber(env), chatgpt = createChatGPTService() } = {}) {
+const files = new Map([['/', ['index.html', 'text/html']], ...['app.js', 'lecture-picker.js', 'lecture-vocabulary.js', 'follow-scroll.js', 'notes.js', 'chatgpt.js', 'transcript.js', 'audio.js', 'lecture-queue.js', 'capture-worklet.js', 'streaming.js'].map(file => ['/' + file, [file, 'text/javascript']]), ['/style.css', ['style.css', 'text/css']]]);
+export function createApp({ env = process.env, transcriber = new LocalTranscriber(env), chatgpt = createChatGPTService(), schedule = new ScheduleStore(env) } = {}) {
   const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
   const records = new RecordStore(env.LECTURE_DATA_DIR || fileURLToPath(new URL('./data/lectures', import.meta.url)));
   let sttBusy = false, summaryBusy = false;
@@ -20,6 +21,10 @@ export function createApp({ env = process.env, transcriber = new LocalTranscribe
     try {
       const host = req.headers.host;
       if (!/^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(host || '')) return json(res, 403, { error: 'Local access only.' });
+      if (req.method === 'GET' && req.url === '/api/schedule') {
+        if (req.headers.origin && req.headers.origin !== `http://${host}`) return json(res, 403, { error: 'Origin rejected' });
+        return json(res, 200, await schedule.get());
+      }
       if (req.url.startsWith('/api/chatgpt/') && req.method === 'GET') {
         if (req.headers['x-lecture-client'] !== '1' || (req.headers.origin && req.headers.origin !== `http://${host}`)) return json(res, 403, { error: 'Origin rejected' });
         try {
@@ -43,12 +48,16 @@ export function createApp({ env = process.env, transcriber = new LocalTranscribe
         res.writeHead(200, { 'Content-Type': `${mime}; charset=utf-8` });
         return res.end(req.method === 'HEAD' ? undefined : content);
       }
-      if (req.method !== 'POST' || !recordRoute && !['/api/session', '/api/transcribe', '/api/summary', '/api/chatgpt/sign-in', '/api/chatgpt/cancel', '/api/chatgpt/disconnect'].includes(req.url)) return json(res, 404, { error: 'Not found' });
+      if (req.method !== 'POST' || !recordRoute && !['/api/schedule/import', '/api/session', '/api/transcribe', '/api/summary', '/api/chatgpt/sign-in', '/api/chatgpt/cancel', '/api/chatgpt/disconnect'].includes(req.url)) return json(res, 404, { error: 'Not found' });
       if (req.headers.origin !== `http://${host}` && req.headers.origin !== `https://${host}`) return json(res, 403, { error: 'Origin rejected' });
       if (!req.headers['content-type']?.startsWith('application/json')) return json(res, 415, { error: 'JSON required' });
-      let raw = ''; for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > (recordRoute ? 10000000 : 700000)) return json(res, 413, { error: 'Request too large' }); }
+      let raw = ''; for await (const chunk of req) { raw += chunk; if (Buffer.byteLength(raw) > (recordRoute ? 10000000 : req.url === '/api/schedule/import' ? 2900000 : 700000)) return json(res, 413, { error: 'Request too large' }); }
       let body; try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Invalid JSON' }); }
       if (!body || typeof body !== 'object') return json(res, 400, { error: 'Invalid request' });
+      if (req.url === '/api/schedule/import') {
+        try { return json(res, 200, await schedule.import(body)); }
+        catch (error) { return json(res, error.status || 500, { error: error.status ? error.message : '시간표를 저장하지 못했습니다.' }); }
+      }
       if (req.url.startsWith('/api/chatgpt/')) {
         try {
           if (req.url === '/api/chatgpt/sign-in') {

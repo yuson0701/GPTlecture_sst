@@ -8,6 +8,10 @@ const text = (x, max) => typeof x === 'string' && x.length <= max;
 const seconds = x => Number.isFinite(x) && x >= 0;
 export function validateRecord(value) {
   if (!value || !Number.isSafeInteger(value.revision) || value.revision < 0 || !text(value.title, 120) || !text(value.glossary, 1500) || !seconds(value.elapsed) || !['idle', 'connecting', 'live', 'stopping', 'demo'].includes(value.state)) throw fail('Invalid lecture metadata');
+  const selection = value.scheduleLecture;
+  if (selection != null && (!text(selection.id, 24) || !/^[a-f0-9]{24}$/.test(selection.id) ||
+      !text(selection.date, 10) || !/^\d{4}-\d{2}-\d{2}$/.test(selection.date) || !text(selection.period, 40) ||
+      !text(selection.course, 80) || !text(selection.title, 300) || !text(selection.professor, 120))) throw fail('Invalid schedule selection');
   if (!Array.isArray(value.transcript) || value.transcript.length > 50000 || value.transcript.some(x => !x || !text(x.id, 150) || !text(x.text, 20000) || !seconds(x.seconds) || typeof x.final !== 'boolean')) throw fail('Invalid transcript');
   if (new Set(value.transcript.map(x => x.id)).size !== value.transcript.length) throw fail('Duplicate transcript IDs');
   if (!Array.isArray(value.summarized) || value.summarized.length > 100000 || value.summarized.some(x => !text(x, 180))) throw fail('Invalid summary references');
@@ -15,7 +19,9 @@ export function validateRecord(value) {
   if (value.blocks.some(x => (x.sections !== undefined && !validSections(x.sections)) || (x.attempts !== undefined && (!Array.isArray(x.attempts) || x.attempts.length > 1000 || x.attempts.some(u => u !== null && !reportedUsage(u)))))) throw fail('Invalid note sections or token usage');
   if (new Set(value.blocks.map(x => x.id)).size !== value.blocks.length) throw fail('Duplicate block IDs');
   // Copy only the record fields; audio and client timestamps are never stored.
-  return { title: value.title, glossary: value.glossary, elapsed: value.elapsed, state: value.state, transcript: value.transcript.map(x => ({ id: x.id, text: x.text, seconds: x.seconds, final: x.final, failed: x.failed === true })),
+  return { title: value.title, glossary: value.glossary,
+    scheduleLecture: selection == null ? null : Object.fromEntries(['id', 'date', 'period', 'course', 'title', 'professor'].map(key => [key, selection[key]])),
+    elapsed: value.elapsed, state: value.state, transcript: value.transcript.map(x => ({ id: x.id, text: x.text, seconds: x.seconds, final: x.final, failed: x.failed === true })),
     blocks: value.blocks.map(x => ({ id: x.id, source: x.source, state: x.state,
       method: ['chatgpt', 'ollama', 'extractive', 'demo'].includes(x.method) ? x.method : undefined,
       sections: x.sections?.map(s => ({ title: s.title, bullets: [...s.bullets] })), attempts: x.attempts?.map(reportedUsage),

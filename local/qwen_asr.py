@@ -11,13 +11,26 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from infer_qwen_adapter import load_portable_adapter, validate_package
-from qwen_decode import decode_audio
+from qwen_decode import DecodePolicy, decode_audio
 
 MODELS = {size: f'mlx-community/Qwen3-ASR-{size}-8bit' for size in ('1.7B', '0.6B')}
 DEFAULT_MODEL = MODELS['1.7B']
 BASE_REVISION = 'a8379a2e2f9e313c9292cdf1af4055ab56d50d55'
 DEFAULT_ADAPTER = 'yuson0701/qwen3-asr-1.7b-korean-lecture-lora-mlx'
 ADAPTER_REVISION = '4432a3827098d104178e8470d73422b010f3c222'
+
+# Live windows are at most eight seconds. Keep the published evaluation policy
+# unchanged, but bound live retries to a full pass plus <= 3 shorter passes.
+LIVE_POLICY = DecodePolicy(version='qwen-live-mixed-v1', language=None,
+                           full_max_tokens=256, chunk_max_tokens=128,
+                           chunk_seconds=3.0, minimum_split_seconds=1.0,
+                           max_depth=0)
+MIXED_LANGUAGE_PROMPT = (
+    'Transcribe the speech faithfully in its original languages. '
+    'This is primarily a Korean university lecture with English technical terms. '
+    'Write Korean speech in Korean and spoken English words and abbreviations '
+    'in English using the Latin alphabet. Do not translate or add explanations.'
+)
 
 
 def adapter_path():
@@ -113,21 +126,17 @@ class QwenRecognizer:
             return {'text': '', 'inferenceMs': round((time.perf_counter() - started) * 1000, 1)}
         terms = [word.strip() for word in re.split(r'[,\n]', glossary) if word.strip()][:50]
         try:
-            if self.fine_tuned:
-                # Keep the evaluated retry policy; apply user vocabulary consistently
-                # to every attempt only when vocabulary was explicitly provided.
-                prompted = SimpleNamespace(generate=lambda audio, **kwargs:
-                                           self.model.generate(audio, **kwargs, hotwords=terms)) if terms else self.model
-                decoded = decode_audio(prompted, samples, after_attempt=self.mx.clear_cache)
-                if decoded['unresolved']:
-                    raise RuntimeError('미세조정 음성 인식이 반복 또는 길이 제한에 도달했습니다. 이 구간을 다시 처리해 주세요.')
-                return {'text': decoded['text'].strip(), 'inferenceMs': round((time.perf_counter() - started) * 1000, 1),
-                        'fineTuned': True, 'decodeRetries': decoded['retries']}
-            result = self.model.generate(samples, language='Korean', max_tokens=256,
-                                         temperature=0.0, verbose=False, hotwords=terms)
-            if result.generation_tokens >= 256:
-                raise RuntimeError('음성 인식이 길이 제한에 도달했습니다. 이 구간을 다시 처리해 주세요.')
-            return {'text': result.text.strip(), 'inferenceMs': round((time.perf_counter() - started) * 1000, 1)}
+            prompted = SimpleNamespace(generate=lambda audio, **kwargs:
+                                       self.model.generate(audio, **kwargs, hotwords=terms,
+                                                           system_prompt=MIXED_LANGUAGE_PROMPT))
+            decoded = decode_audio(prompted, samples, policy=LIVE_POLICY,
+                                   after_attempt=self.mx.clear_cache)
+            if decoded['unresolved']:
+                raise RuntimeError('음성 인식이 반복 또는 길이 제한에 도달했습니다. 이 구간은 재시도가 필요합니다.')
+            return {'text': decoded['text'].strip(),
+                    'inferenceMs': round((time.perf_counter() - started) * 1000, 1),
+                    'fineTuned': self.fine_tuned, 'decodeRetries': decoded['retries']}
+
         finally:
             # Release transient allocations between windows during long lectures.
             self.mx.clear_cache()

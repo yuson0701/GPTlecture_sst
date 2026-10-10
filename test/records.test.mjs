@@ -7,6 +7,17 @@ import { randomUUID } from 'node:crypto';
 import { RecordStore } from '../local/records.mjs';
 import { createApp } from '../server.mjs';
 const record = () => ({ revision: 0, title: '경제학 강의', glossary: '기회비용', elapsed: 3600, state: 'idle', transcript: [{ id: 'one', seconds: 0, final: true, text: '기회비용을 배웁니다.' }], blocks: [{ id: 1, source: '기회비용을 배웁니다.', items: [{ id: 'one:0', seconds: 0, text: '기회비용을 배웁니다.' }], state: 'done', method: 'chatgpt', sections: [{ title: '기회비용', bullets: ['최선의 대안의 가치입니다.'] }], attempts: [{ input_tokens: 100, output_tokens: 50, total_tokens: 150 }, null], text: '선택의 비용을 설명합니다.', cleaned: '기회비용을 배웁니다.' }], summarized: ['one:0'] });
+test('schedule selection and edited vocabulary persist without unrelated spreadsheet data', async t => {
+  const store = new RecordStore(await directory(t)), id = randomUUID();
+  const selection = { id: 'a'.repeat(24), date: '2026-10-12', period: '1', course: '심순', title: '심장근', professor: '교수' };
+  await store.save(id, { ...record(), glossary: 'preload, 사용자 추가 용어', scheduleLecture: { ...selection, student: 'excluded' } });
+  const saved = await store.get(id);
+  assert.deepEqual(saved.scheduleLecture, selection);
+  assert.equal(saved.glossary, 'preload, 사용자 추가 용어');
+  assert.throws(() => store.save(id, { ...record(), scheduleLecture: { ...selection, id: '../bad' } }), /Invalid schedule/);
+  const legacyId = randomUUID(); await store.save(legacyId, record());
+  assert.equal((await store.get(legacyId)).scheduleLecture, null);
+});
 async function directory(t) { const path = await mkdtemp(join(tmpdir(), 'lecture-records-')); t.after(() => rm(path, { recursive: true, force: true })); return path; }
 test('records survive a new store instance with all source/summary pairs', async t => {
   const dir = await directory(t), id = randomUUID();

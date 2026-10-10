@@ -16,7 +16,7 @@ import unicodedata
 class DecodePolicy:
     version: str = 'qwen-bounded-audio-retry-v1'
     sample_rate: int = 16000
-    language: str = 'Korean'
+    language: str | None = 'Korean'
     temperature: float = 0.0
     full_max_tokens: int = 2048
     chunk_max_tokens: int = 768
@@ -67,7 +67,7 @@ def decode_audio(model, audio, *, policy=DEFAULT_POLICY, after_attempt=None):
     import numpy as np
     if not isinstance(audio, np.ndarray) or audio.ndim != 1 or not len(audio) or not np.isfinite(audio).all():
         raise ValueError('Audio must be a nonempty finite mono NumPy waveform')
-    if (policy.sample_rate != 16000 or policy.language != 'Korean' or policy.temperature != 0
+    if (policy.sample_rate != 16000 or policy.language not in ('Korean', None) or policy.temperature != 0
             or policy.full_max_tokens < 1 or policy.chunk_max_tokens < 1
             or not 0 < policy.minimum_split_seconds <= policy.chunk_seconds
             or not math.isfinite(policy.chunk_seconds) or policy.max_depth < 0
