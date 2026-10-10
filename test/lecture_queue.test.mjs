@@ -88,3 +88,15 @@ test('draft failures are disposable, and a failed final is tried only once per r
   assert.equal(attempts, 5); assert.equal(queue.failures.length, 2);
   assert.equal(queue.failed, null);
 });
+
+test('a quarantined failure does not suppress previews of later speech', async () => {
+  const storage = new MemorySpool(), drafts = [];
+  const queue = new LectureQueue(async item => {
+    if (item.final) throw Error('bad clip');
+    drafts.push(item.id);
+  }, () => {}, storage);
+  queue.enqueue(clip(0)); await queue.settle();
+  queue.enqueue({ ...clip(1), final: false }); await queue.settle();
+  assert.deepEqual(drafts, ['1']);
+  assert.equal(queue.failures.length, 1);
+});
