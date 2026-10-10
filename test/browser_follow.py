@@ -39,7 +39,7 @@ with sync_playwright() as p:
                 };
             }""")
             def bottom():
-                page.wait_for_function('document.documentElement.scrollHeight - innerHeight - scrollY <= 3')
+                page.wait_for_function('() => document.documentElement.scrollHeight - innerHeight - scrollY <= 3')
             def add(selector='#summary', count=8):
                 page.evaluate('([selector, count]) => addParagraphs(selector, count)', [selector, count])
             for view, selector in [('notes', '#summary'), ('script', '#transcript')]:
