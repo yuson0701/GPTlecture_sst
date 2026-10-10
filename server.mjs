@@ -93,7 +93,7 @@ export function createApp({ env = process.env, transcriber = new ModelTranscribe
         }
         if (sttBusy) return json(res, 429, { error: '음성 처리 중입니다. 다른 강의 탭을 종료해 주세요.' });
         sttBusy = true;
-        try { const result = await transcriber.request(req.url === '/api/session' ? 'load' : 'transcribe', { sttModel: body.sttModel, language: body.language, audio: body.audio, glossary: body.glossary, final: body.final !== false, session: body.session, sequence: body.sequence }); return json(res, 200, result); }
+        try { const result = await transcriber.request(req.url === '/api/session' ? 'load' : 'transcribe', { sttModel: body.sttModel, language: 'auto', audio: body.audio, glossary: body.glossary, final: body.final !== false, session: body.session, sequence: body.sequence }); return json(res, 200, result); }
         catch (error) { return json(res, error.status === 400 ? 400 : 503, { error: error.message }); }
         finally { sttBusy = false; }
       }

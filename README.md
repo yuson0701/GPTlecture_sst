@@ -4,8 +4,8 @@
 
 This version preserves the timetable picker and course vocabulary changes from
 commit `c346313`. Before recording, use **음성 모델** above the timetable to choose
-**Qwen3-ASR · 내 강의 모델** or **Whisper · Apple GPU**. Use **인식 언어** to choose
-automatic Korean/English detection, Korean, or English. Both engines transcribe
+**Qwen3-ASR · 내 강의 모델** or **Whisper · Apple GPU**. Language recognition is
+always automatic, including retries of older clips. Both engines transcribe
 locally; this does not enable an OpenAI transcription API or Ollama.
 
 On your Apple Silicon Mac, keep your existing Qwen installation and add Whisper:
@@ -26,8 +26,8 @@ recording controls and model choice visible. Expand **시간표 · 전공 용어
 selection and vocabulary, or the token total for usage details. Errors remain visible
 without opening settings.
 
-The model and language are fixed during a lecture, saved in its record, and attached
-to pending audio clips. Reopening a record restores those settings for retry; old
+The model is fixed during a lecture, saved in its record, and attached to pending
+audio clips. Reopening a record restores that model for retry; language is automatic; old
 records without model metadata require an explicit model choice. Your last selection
 is remembered for the next new lecture. Only one recognition model is loaded at a
 time: switching waits for the old Python process to exit before loading the next.
@@ -69,7 +69,20 @@ Persistence QA: `CHROMIUM_BIN=/path/to/chromium python3 test/browser_library.py`
 
 ## Lecture schedule and vocabulary hints
 
-Choose **새 강의 시작 → 시간표에서 강의 선택 → Excel 시간표 불러오기** and select your university `.xlsx` timetable (up to 2 MB). Filter by course, date, or lecture/instructor name, select a lecture, review the suggested terms, then click **제목·추천 용어 적용**. Edit **음성 인식에 사용할 용어** with terms from your slides before starting the recording; separate terms with commas or newlines.
+Opening **새 강의** automatically chooses today's saved lecture whose class start is nearest to the current **Asia/Seoul** time, then fills its title and suggested vocabulary. It checks again immediately before recording if you have not manually edited the title, vocabulary, or selection. Saved recordings are never reassigned. No class today means a blank lecture; it does not choose another day's class. Equal distances prefer the earlier start. Multi-period entries such as `1-3` match any covered period.
+
+| Period | Start (Korea time) |
+| --- | --- |
+| 1 | 08:30 |
+| 2 | 09:30 |
+| 3 | 10:40 |
+| 4 | 11:40 |
+| 5 | 13:30 |
+| 6 | 14:30 |
+| 7 | 15:30 |
+| 8 | 16:30 |
+
+Expand **시간표 · 전공 용어** to override the choice or edit the suggested terms. The language selector and Excel upload control have been removed. Automatic selection uses the timetable already saved in `data/schedule.json` (or `LECTURE_SCHEDULE_FILE`). To replace the timetable outside the UI, run `python3 scripts/import_schedule.py /path/to/timetable.xlsx --output data/schedule.json`, then reload the page.
 
 The importer reads the **전체** sheet and the columns **날짜, 교시, 과목명, 강의명, 교수님**. A workbook with only one sheet can use another sheet name. It ignores student assignment columns and does not duplicate entries from the course/weekly sheets. It preserves class periods rather than guessing clock times. Missing course names appear as **미분류**. Invalid imports leave the previous timetable intact.
 

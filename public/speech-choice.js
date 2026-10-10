@@ -11,11 +11,7 @@ export function initSpeechChoice(onChange) {
   }
   $('stt-model').onchange = () => {
     selected = $('stt-model').value;
-    try { localStorage.setItem('lecture-speech-choice', JSON.stringify({ model: selected, language: $('stt-language').value })); } catch {}
-    publish();
-  };
-  $('stt-language').onchange = () => {
-    try { localStorage.setItem('lecture-speech-choice', JSON.stringify({ model: selected, language: $('stt-language').value })); } catch {}
+    try { localStorage.setItem('lecture-speech-choice', JSON.stringify({ model: selected })); } catch {}
     publish();
   };
   const service = {
@@ -28,13 +24,13 @@ export function initSpeechChoice(onChange) {
     },
     newLecture() {
       const saved = preferences(); selected = models.some(x => x.id === saved.model) ? saved.model : fallback;
-      $('stt-language').value = ['auto', 'ko', 'en'].includes(saved.language) ? saved.language : 'auto'; publish();
+      publish();
     },
-    restore(record) { if (!models.length) return; selected = record.sttModel || ''; $('stt-language').value = record.recognitionLanguage || 'auto'; publish(); },
+    restore(record) { if (!models.length) return; selected = record.sttModel || ''; publish(); },
     needsSelection: () => models.length > 0 && !selected,
-    request: () => models.length ? { sttModel: selected || undefined, language: $('stt-language').value } : {},
-    snapshot: () => models.length ? { sttModel: selected || null, recognitionLanguage: $('stt-language').value } : {},
-    lock(locked, active = locked) { for (const id of ['stt-model', 'stt-language']) $(id).disabled = locked; $('stt-refresh').disabled = active; },
+    request: () => ({ ...(models.length ? { sttModel: selected || undefined } : {}), language: 'auto' }),
+    snapshot: () => models.length ? { sttModel: selected || null, recognitionLanguage: 'auto' } : {},
+    lock(locked, active = locked) { $('stt-model').disabled = locked; $('stt-refresh').disabled = active; },
   };
   $('stt-refresh').onclick = async () => {
     $('stt-refresh').disabled = true;

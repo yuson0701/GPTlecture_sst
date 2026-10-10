@@ -6,11 +6,9 @@
 <main id="workspace" hidden><section class="document"><input id="title" aria-label="강의 제목" maxlength="120" placeholder="제목 없는 강의"><div class="metadata"><span id="lecture-date"></span><time id="timer">00:00</time><span id="count">0개 구간</span></div>
 <section id="speech-choice" class="speech-choice" hidden aria-label="음성 인식 모델 선택">
 <label>음성 모델<select id="stt-model"><option value="">음성 모델 선택</option></select></label>
-<label>인식 언어<select id="stt-language"><option value="auto">자동 · 한국어 + English</option><option value="ko">한국어 중심</option><option value="en">English</option></select></label>
 <p id="stt-readiness" role="status"></p>
 </section>
 <details id="lecture-options" class="lecture-picker"><summary>시간표 · 전공 용어</summary>
-<div class="schedule-heading"><label class="schedule-upload">Excel 시간표 불러오기<input id="schedule-file" type="file" accept=".xlsx" aria-label="Excel 시간표 불러오기"></label></div>
 <p id="schedule-source" role="status">시간표를 불러오는 중…</p>
 <div class="schedule-filters"><label>과목<select id="schedule-course"><option value="">모든 과목</option></select></label><label>날짜<input id="schedule-date" type="date"></label><label>강의·교수 검색<input id="schedule-search" type="search" placeholder="예: 심전도, 심장근, 교수명"></label></div>
 <label class="schedule-choice">강의<select id="schedule-lecture"><option value="">강의 선택</option></select></label>

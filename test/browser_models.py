@@ -44,26 +44,25 @@ with tempfile.TemporaryDirectory() as tmp, sync_playwright() as p:
         page.locator('#new-lecture' if choice == 'whisper' else '#new-from-note').click()
         page.locator('#title').fill('Model regression ' + choice)
         page.locator('#stt-model').select_option(choice)
-        page.locator('#stt-language').select_option('ko')
+        expect(page.locator('#stt-language')).to_have_count(0)
         expect(page.locator('#glossary')).not_to_be_visible()
         page.locator('#lecture-options > summary').click()
         page.locator('#glossary').fill('ECG, 활동전위')
         page.locator('#lecture-options > summary').click()
         page.locator('#start').click()
         expect(page.locator('#stt-model')).to_be_disabled()
-        expect(page.locator('#stt-language')).to_be_disabled()
         page.wait_for_timeout(1800)
         page.locator('#stop').click()
         expect(page.locator('#new-from-note')).to_be_enabled(timeout=10000)
         assert sessions[-1]['sttModel'] == choice
-        assert sessions[-1]['language'] == 'ko'
+        assert sessions[-1]['language'] == 'auto'
     assert failed
     assert {c['sttModel'] for c in calls} == {'whisper', 'qwen'}
-    assert all(c['language'] == 'ko' and c['glossary'] == 'ECG, 활동전위' for c in calls)
+    assert all(c['language'] == 'auto' and c['glossary'] == 'ECG, 활동전위' for c in calls)
     page.reload()
     page.locator('.record-card').filter(has_text='Model regression whisper').first.click()
     expect(page.locator('#stt-model')).to_have_value('whisper')
-    expect(page.locator('#stt-language')).to_have_value('ko')
+    expect(page.locator('#stt-language')).to_have_count(0)
     expect(page.locator('#stt-model')).to_be_disabled()
     page.locator('#retry').click()
     expect(page.locator('#status')).to_have_text('처리 완료', timeout=10000)

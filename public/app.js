@@ -19,7 +19,7 @@ let recordId = null, revision = 0, changeVersion = 0, savedVersion = 0, saving =
 const lecturePicker = initLecturePicker({
   canEdit: () => mode === 'idle' && !uiBusy && !recordLoaded && !transcript.items.size,
   onApply: (lecture, terms) => {
-    $('title').value = `${lecture.course} · ${lecture.title}`.slice(0, 120);
+    $('title').value = lecture ? `${lecture.course} · ${lecture.title}`.slice(0, 120) : '';
     $('glossary').value = terms; lecturePicker.wordCount(); changed(); controls();
   },
 });
@@ -107,7 +107,7 @@ async function newLecture() {
   recordId = null; revision = 0; changeVersion = savedVersion = 0; recordLoaded = false;
   reset(); $('lecture-date').textContent = new Date().toLocaleDateString('ko-KR'); $('title').value = ''; $('glossary').value = ''; $('save-status').textContent = '녹음을 시작하면 자동 저장됩니다';
   speechChoice.newLecture();
-  lecturePicker.restore(null); lecturePicker.wordCount();
+  void lecturePicker.newLecture(); lecturePicker.wordCount();
   $('save-retry').hidden = true; $('status').textContent = configured ? '시작할 준비가 됐어요' : '로컬 음성 모델 설치 필요';
   showWorkspace(true); controls(); $('title').focus(); return true;
 }
@@ -312,7 +312,7 @@ function queueChanged() {
 function makeLectureQueue(storage, glossary) {
   return new LectureQueue(async chunk => {
     let result; const requestStarted = performance.now();
-    try { result = await api('/api/transcribe', { ...speechChoice.request(), ...(chunk.sttModel ? { sttModel: chunk.sttModel, language: chunk.language } : {}), audio: chunk.audio, glossary, final: chunk.final }); }
+    try { result = await api('/api/transcribe', { ...speechChoice.request(), ...(chunk.sttModel ? { sttModel: chunk.sttModel } : {}), audio: chunk.audio, glossary, final: chunk.final }); }
     catch (failure) {
       if (chunk.final) {
         transcript.set(chunk.id, { seconds: chunk.seconds, text: '[인식 실패 · 보관한 음성으로 재시도 가능]', final: false, failed: true });
@@ -341,6 +341,7 @@ function enqueue(chunk) {
 }
 $('start').onclick = async () => {
   if (!canReset()) return;
+  await lecturePicker.autoSelect();
   if (!await createRecord()) return;
   reset(); mode = 'connecting'; changed(); controls(); $('status').textContent = '로컬 음성 모델 준비 중';
   try {

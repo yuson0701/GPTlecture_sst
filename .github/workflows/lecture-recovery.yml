@@ -49,4 +49,5 @@ jobs:
           python test/browser_recovery.py http://127.0.0.1:3010
           python test/browser_silence.py http://127.0.0.1:3010
           python test/browser_models.py http://127.0.0.1:3010
+          python test/browser_schedule.py http://127.0.0.1:3010
           python test/browser_library.py
