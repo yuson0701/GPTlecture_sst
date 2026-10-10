@@ -1,3 +1,4 @@
+import { followLatest } from './follow-scroll.js';
 import { sourceBatch, summaryDue, reportedUsage, usageTotals, blockMarkdown } from './notes.js';
 import { initChatGPT, summaryOptions, summaryReady, pauseChatGPT } from './chatgpt.js';
 import { Transcript, timestamp } from './transcript.js';
@@ -7,6 +8,7 @@ import { StreamingFrames, StreamingQueue } from './streaming.js';
 const $ = id => document.getElementById(id);
 let transcript = new Transcript(), microphone, queue, timer, demoTimer, mode = 'idle', started = 0, elapsed = 0, summaryBlocks = [], configured = false, summarizing = false;
 const summarized = new Set();
+const follow = followLatest($('workspace'), () => !$('workspace').hidden && ['live', 'demo', 'stopping'].includes(mode));
 let lastSummaryAt = 0, silenceBoundary = null, lastInferenceSeconds = null;
 let qwen = false, streaming = false, streamingRows = new Map(), finalRows = 0, streamSession = null;
 const demoLines = ['오늘은 경제학의 기본 개념인 기회비용에 대해 알아보겠습니다. 기회비용은 어떤 선택을 했을 때 포기한 대안 중 가장 가치 있는 것의 가치입니다.', '예를 들어 두 시간 동안 아르바이트를 하면 2만 원을 벌 수 있지만, 그 시간에 시험 공부를 선택했다면 포기한 2만 원이 기회비용에 포함됩니다.', '여기서 중요한 것은 모든 대안의 가치를 더하는 것이 아니라, 포기한 대안 중 가장 좋은 하나만 고려한다는 점입니다.', '이미 지출해서 회수할 수 없는 비용은 매몰비용이라고 합니다. 합리적인 의사결정에서는 매몰비용보다 앞으로 발생할 비용과 편익을 비교해야 합니다.'];
@@ -98,7 +100,8 @@ setInterval(() => { if (recordId && mode !== 'idle') changed(); void saveRecord(
 function error(message) { if (message) { $('settings-panel').hidden = false; $('settings-toggle').setAttribute('aria-expanded', 'true'); } $('error').textContent = message; $('error').hidden = !message; }
 function updateLive() {
   const pending = transcript.ordered().filter(x => !x.failed && (!x.final || !summarized.has(`${x.id}:0`)));
-  $('live-text').textContent = pending.map(x => x.text).join(' ') || (transcript.items.size ? '다음 말씀을 기다리고 있습니다.' : '강의를 시작하면 여기에 말씀이 나타납니다.');
+  const text = pending.map(x => x.text).join(' ') || (transcript.items.size ? '다음 말씀을 기다리고 있습니다.' : '강의를 시작하면 여기에 말씀이 나타납니다.');
+  if ($('live-text').textContent !== text) $('live-text').textContent = text;
 }
 for (const name of ['notes', 'script']) $(name + '-tab').onclick = () => {
   for (const tab of ['notes', 'script']) { $(tab + '-view').hidden = tab !== name; $(tab + '-tab').setAttribute('aria-pressed', String(tab === name)); }
@@ -123,7 +126,7 @@ async function api(path, data) {
 }
 function render() {
   changed();
-  const target = $('transcript'), atBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 100;
+  const target = $('transcript');
   const items = transcript.ordered().filter(x => x.text);
   const existing = new Map([...target.querySelectorAll('.segment')].map(row => [row.dataset.id, row]));
   const rows = new Map(existing);
@@ -145,13 +148,12 @@ function render() {
     const row = rows.get(item.id);
     if (row && target.children[index] !== row) target.insertBefore(row, target.children[index] || null);
   });
-  if (atBottom) target.scrollTop = target.scrollHeight;
   $('count').textContent = `${items.filter(x => x.final).length}개 구간${items.some(x => !x.final) ? ' · 실시간 초안' : ''}`; controls();
 }
 
 function renderStreaming(events) {
   if (events.length) changed();
-  const target = $('transcript'), atBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 100;
+  const target = $('transcript');
   for (const event of events) {
     if (!event.text) continue;
     const previous = transcript.items.get(event.id);
@@ -167,7 +169,6 @@ function renderStreaming(events) {
     row.className = `segment ${event.final ? '' : 'pending'}`;
     row.lastChild.textContent = event.text;
   }
-  if (atBottom && events.length) target.scrollTop = target.scrollHeight;
   $('count').textContent = `${finalRows}개 구간 · 실시간 스트리밍`;
   if (events.length) controls();
 }
@@ -209,13 +210,14 @@ function renderSummary(block) {
   card.querySelector('.block-warning').hidden = !block.warning;
 }
 function reset() {
+  follow.reset();
   queue?.storage?.db?.close();
   silenceBoundary = null; lastInferenceSeconds = null;
   transcript = new Transcript(); streamingRows = new Map(); finalRows = 0; streamSession = null; summarized.clear(); summaryBlocks = []; elapsed = 0; queue = null; $('latency').textContent = ''; error('');
   $('summary').textContent = '강의 내용을 기다리고 있습니다.'; $('transcript').textContent = '말씀하시면 여기에 실시간 초안이 나타납니다. 조용할 때는 기다립니다.'; $('timer').textContent = '00:00'; $('count').textContent = '0개 구간'; $('summary-status').textContent = '1분 15초마다 또는 5초 이상 조용할 때 정리합니다';
 }
 function canReset() { return (queue instanceof LectureQueue && !queue.failed) || !queue?.items.length || window.confirm('아직 처리하지 못한 음성은 이 탭에만 있습니다. 이동하면 재시도할 수 없습니다. 계속할까요?'); }
-function clock() { started = Date.now(); lastSummaryAt = started; timer = setInterval(() => { elapsed = (Date.now() - started) / 1000; $('timer').textContent = timestamp(elapsed); }, 500); }
+function clock() { follow.update(); started = Date.now(); lastSummaryAt = started; timer = setInterval(() => { elapsed = (Date.now() - started) / 1000; $('timer').textContent = timestamp(elapsed); }, 500); }
 function pendingSummary() {
   return transcript.ordered().filter(x => x.final && x.text && !x.failed).flatMap(item => {
     const parts = [];
