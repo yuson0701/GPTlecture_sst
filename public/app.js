@@ -18,6 +18,7 @@ const demoParaphrases = ['기회비용은 선택 때문에 포기한 대안 중 
 let recordId = null, revision = 0, changeVersion = 0, savedVersion = 0, saving = null, restoring = false, recordLoaded = false, uiBusy = false;
 const lecturePicker = initLecturePicker({
   canEdit: () => mode === 'idle' && !uiBusy && !recordLoaded && !transcript.items.size,
+  canAutoApply: () => mode === 'idle' && !recordLoaded && !transcript.items.size,
   onApply: (lecture, terms) => {
     $('title').value = lecture ? `${lecture.course} · ${lecture.title}`.slice(0, 120) : '';
     $('glossary').value = terms; lecturePicker.wordCount(); changed(); controls();

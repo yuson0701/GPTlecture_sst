@@ -36,7 +36,7 @@ export function nearestLecture(lectures, now = new Date()) {
   return chosen;
 }
 
-export function initLecturePicker({ onApply, canEdit }) {
+export function initLecturePicker({ onApply, canEdit, canAutoApply = canEdit }) {
   const $ = id => document.getElementById(id);
   let data = { lectures: [] }, active = null, generation = 0, pristine = false;
   const fields = ['schedule-course', 'schedule-date', 'schedule-search', 'schedule-lecture', 'schedule-apply'];
@@ -86,10 +86,10 @@ export function initLecturePicker({ onApply, canEdit }) {
     catch (error) { $('schedule-source').textContent = error.message; }
   }
   async function autoSelect() {
-    if (!pristine || !canEdit()) return;
+    if (!pristine || !canAutoApply()) return;
     const version = generation;
     await ready;
-    if (version !== generation || !pristine || !canEdit()) return;
+    if (version !== generation || !pristine || !canAutoApply()) return;
     const row = nearestLecture(data.lectures);
     if (row && row.id !== active?.id) apply(row);
     else if (!row) { const previous = active; showSelection(null); if (previous) onApply(null, ''); }
