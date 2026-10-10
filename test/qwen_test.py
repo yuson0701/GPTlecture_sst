@@ -11,7 +11,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'local'))
-from qwen_asr import QwenRecognizer, validate_platform, model_path, adapter_path, status, DEFAULT_ADAPTER, ADAPTER_REVISION, BASE_REVISION
+from qwen_asr import QwenRecognizer, validate_platform, model_path, adapter_path, status, DEFAULT_ADAPTER, ADAPTER_REVISION, BASE_REVISION, LIVE_POLICY, MIXED_LANGUAGE_PROMPT
 spec = importlib.util.spec_from_file_location('setup_qwen', ROOT / 'scripts/setup_qwen.py')
 setup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(setup)
@@ -38,7 +38,7 @@ class QwenTests(unittest.TestCase):
         self.assertEqual(result['text'], '회복된 원문')
         self.assertTrue(result['fineTuned'])
         self.assertEqual(result['decodeRetries'], 1)
-        self.assertEqual([c.kwargs['max_tokens'] for c in model.model.generate.call_args_list], [2048, 768])
+        self.assertEqual([c.kwargs['max_tokens'] for c in model.model.generate.call_args_list], [256, 128])
         self.assertTrue(all(c.kwargs['hotwords'] == ['GDP'] for c in model.model.generate.call_args_list))
 
     def test_fine_tuned_unresolved_output_is_not_accepted(self):
@@ -48,11 +48,13 @@ class QwenTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, '반복'):
             model.transcribe(np.ones(16000))
 
-    def test_fine_tuned_no_glossary_preserves_evaluated_prompt(self):
+    def test_mixed_language_prompt_also_applies_without_glossary(self):
         model = self.recognizer()
         model.fine_tuned = True
         self.assertTrue(model.transcribe(np.ones(16000))['fineTuned'])
-        self.assertNotIn('hotwords', model.model.generate.call_args.kwargs)
+        self.assertEqual(model.model.generate.call_args.kwargs['hotwords'], [])
+        self.assertIsNone(model.model.generate.call_args.kwargs['language'])
+        self.assertEqual(model.model.generate.call_args.kwargs['system_prompt'], MIXED_LANGUAGE_PROMPT)
 
     def test_adapter_cache_uses_pinned_revision_offline(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'QWEN_ASR_ADAPTER': DEFAULT_ADAPTER}, clear=True):
@@ -127,11 +129,28 @@ class QwenTests(unittest.TestCase):
         model = self.recognizer()
         result = model.transcribe(np.ones(16000, dtype=np.float32), '기회비용, 한계효용\nGDP')
         args = model.model.generate.call_args.kwargs
-        self.assertEqual(args['language'], 'Korean')
+        self.assertIsNone(args['language'])
         self.assertEqual(args['hotwords'], ['기회비용', '한계효용', 'GDP'])
         self.assertEqual(args['max_tokens'], 256)
         self.assertEqual(result['text'], '기회비용입니다.')
-        model.mx.clear_cache.assert_called_once()
+        self.assertGreaterEqual(model.mx.clear_cache.call_count, 1)
+
+    def test_live_failure_is_bounded_and_does_not_change_release_policy(self):
+        from qwen_decode import DEFAULT_POLICY
+        self.assertEqual(DEFAULT_POLICY.full_max_tokens, 2048)
+        self.assertEqual(DEFAULT_POLICY.language, 'Korean')
+        model = self.recognizer()
+        model.fine_tuned = True
+        model.model.generate.side_effect = lambda audio, **kw: types.SimpleNamespace(
+            text='반복 ' * 10, generation_tokens=kw['max_tokens'])
+        with self.assertRaisesRegex(RuntimeError, '반복'):
+            model.transcribe(np.ones(8 * 16000), 'ECG')
+        calls = model.model.generate.call_args_list
+        self.assertEqual(len(calls), 4)
+        self.assertLessEqual(sum(c.kwargs['max_tokens'] for c in calls), 640)
+        self.assertTrue(all(c.kwargs['language'] is None for c in calls))
+        self.assertTrue(all(c.kwargs['system_prompt'] == MIXED_LANGUAGE_PROMPT for c in calls))
+        self.assertTrue(all(c.kwargs['hotwords'] == ['ECG'] for c in calls))
 
     def test_silence_never_generates_text(self):
         model = self.recognizer()
