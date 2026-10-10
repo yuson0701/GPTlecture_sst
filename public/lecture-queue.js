@@ -58,7 +58,7 @@ export class LectureQueue {
   }
   enqueue(item) {
     if (item.final === false) {
-      if (this.failed || this.failures.length || this.items.some(x => x.final !== false)) return true;
+      if (this.failed || this.items.some(x => x.final !== false)) return true;
       this.items = this.items.filter(x => x === this.current);
       this.items.push(item); this.onChange(); void this.pump(); return true;
     }
