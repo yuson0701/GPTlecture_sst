@@ -73,8 +73,10 @@ async function openRecord(id) {
     $('status').textContent = '저장된 강의'; $('save-status').textContent = '이 컴퓨터에 저장됨';
     $('notice').textContent = '저장된 기록입니다. 새 녹음은 새 강의에서 시작하세요. 이 브라우저에 보관된 미처리 음성이 있으면 처리 재시도로 복구할 수 있습니다.';
     if (!streaming) {
-      queue = makeLectureQueue(await AudioSpool.open(recordId), data.glossary);
-      await queue.restore();
+      try {
+        queue = makeLectureQueue(await AudioSpool.open(recordId), data.glossary);
+        await queue.restore();
+      } catch (failure) { error('음성 복구 저장소를 열지 못했습니다: ' + failure.message); }
     }
     showWorkspace(true); controls();
   } catch (e) { $('library-message').textContent = e.message; }
@@ -275,7 +277,7 @@ function queueChanged() {
     if (mode === 'live') void stopLecture();
   }
   if (!queue.failed && queue.failures?.length) {
-    error(`${queue.failures.length}개 구간은 인식에 실패해 이 브라우저에 보관했습니다. 녹음과 이후 구간의 전사는 계속됩니다. 종료 후 처리 재시도를 누르세요.`);
+    error(`${queue.failures.length}개 구간은 이 브라우저에 보관되어 있습니다. ${mode === 'live' ? '녹음과 이후 구간의 전사는 계속됩니다. 종료 후 처리 재시도를 누르세요.' : '처리 재시도로 다시 인식할 수 있습니다.'}`);
   }
   controls();
   void autoSummarize();
