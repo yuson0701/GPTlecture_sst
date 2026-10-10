@@ -1,7 +1,8 @@
 import { sourceBatch, summaryDue, reportedUsage, usageTotals, blockMarkdown } from './notes.js';
 import { initChatGPT, summaryOptions, summaryReady, pauseChatGPT } from './chatgpt.js';
 import { Transcript, timestamp } from './transcript.js';
-import { Microphone, AudioQueue, removeOverlap, Segmenter } from './audio.js';
+import { Microphone, removeOverlap, Segmenter } from './audio.js';
+import { AudioSpool, LectureQueue } from './lecture-queue.js';
 import { StreamingFrames, StreamingQueue } from './streaming.js';
 const $ = id => document.getElementById(id);
 let transcript = new Transcript(), microphone, queue, timer, demoTimer, mode = 'idle', started = 0, elapsed = 0, summaryBlocks = [], configured = false, summarizing = false;
@@ -70,7 +71,11 @@ async function openRecord(id) {
     summaryBlocks = data.blocks.map(block => block.state === 'pending' ? { ...block, state: 'failed', warning: '정리 도중 종료된 문단입니다. 지금 정리로 다시 시도하세요.' } : block);
     render(); summaryBlocks.forEach(renderSummary); $('timer').textContent = timestamp(elapsed);
     $('status').textContent = '저장된 강의'; $('save-status').textContent = '이 컴퓨터에 저장됨';
-    $('notice').textContent = '저장된 기록입니다. 새 녹음은 새 강의에서 시작하세요. 미확정 초안은 그대로 표시됩니다. 음성은 저장되지 않아 다시 인식할 수 없습니다.';
+    $('notice').textContent = '저장된 기록입니다. 새 녹음은 새 강의에서 시작하세요. 이 브라우저에 보관된 미처리 음성이 있으면 처리 재시도로 복구할 수 있습니다.';
+    if (!streaming) {
+      queue = makeLectureQueue(await AudioSpool.open(recordId), data.glossary);
+      await queue.restore();
+    }
     showWorkspace(true); controls();
   } catch (e) { $('library-message').textContent = e.message; }
   finally { restoring = false; }
@@ -104,7 +109,7 @@ function controls() {
   $('new-lecture').disabled = active || summarizing; $('home').disabled = active || summarizing; $('new-from-note').disabled = active || summarizing;
   $('demo').disabled = active || summarizing;
   $('stop').disabled = !['live', 'demo'].includes(mode);
-  $('retry').hidden = !queue?.failed || mode !== 'idle';
+  $('retry').hidden = !(queue?.failed || queue?.failures?.length) || mode !== 'idle';
   $('title').disabled = active; $('glossary').disabled = active || streaming;
   $('export').disabled = !transcript.items.size;
   $('summarize').disabled = !summaryReady() || summarizing || mode === 'demo' || !pendingSummary().length;
@@ -202,11 +207,12 @@ function renderSummary(block) {
   card.querySelector('.block-warning').hidden = !block.warning;
 }
 function reset() {
+  queue?.storage?.db?.close();
   silenceBoundary = null; lastInferenceSeconds = null;
   transcript = new Transcript(); streamingRows = new Map(); finalRows = 0; streamSession = null; summarized.clear(); summaryBlocks = []; elapsed = 0; queue = null; $('latency').textContent = ''; error('');
   $('summary').textContent = '강의 내용을 기다리고 있습니다.'; $('transcript').textContent = '말씀하시면 여기에 실시간 초안이 나타납니다. 조용할 때는 기다립니다.'; $('timer').textContent = '00:00'; $('count').textContent = '0개 구간'; $('summary-status').textContent = '1분 15초마다 또는 5초 이상 조용할 때 정리합니다';
 }
-function canReset() { return !queue?.items.length || window.confirm('아직 처리하지 못한 음성은 이 탭에만 있습니다. 이동하면 재시도할 수 없습니다. 계속할까요?'); }
+function canReset() { return (queue instanceof LectureQueue && !queue.failed) || !queue?.items.length || window.confirm('아직 처리하지 못한 음성은 이 탭에만 있습니다. 이동하면 재시도할 수 없습니다. 계속할까요?'); }
 function clock() { started = Date.now(); lastSummaryAt = started; timer = setInterval(() => { elapsed = (Date.now() - started) / 1000; $('timer').textContent = timestamp(elapsed); }, 500); }
 function pendingSummary() {
   return transcript.ordered().filter(x => x.final && x.text && !x.failed).flatMap(item => {
@@ -265,11 +271,35 @@ function queueChanged() {
   if (mode === 'live') $('status').textContent = waiting ? `듣는 중 · ${waiting}개 대기${!streaming ? ' · 확정 전사 우선' : ''}` : '강의를 듣고 있어요';
   if (qwen && lastInferenceSeconds !== null) $('latency').textContent = `인식 요청 ${lastInferenceSeconds.toFixed(1)}초 · 대기 ${waiting}개`;
   if (queue.failed) {
-    error(`${queue.failed.message} 음성 구간은 이 탭에 보관됩니다. 처리 재시도를 눌러 주세요.`);
+    error(`${queue.failed.message} 저장소 또는 연결을 확인한 뒤 처리 재시도를 눌러 주세요.`);
     if (mode === 'live') void stopLecture();
+  }
+  if (!queue.failed && queue.failures?.length) {
+    error(`${queue.failures.length}개 구간은 인식에 실패해 이 브라우저에 보관했습니다. 녹음과 이후 구간의 전사는 계속됩니다. 종료 후 처리 재시도를 누르세요.`);
   }
   controls();
   void autoSummarize();
+}
+function makeLectureQueue(storage, glossary) {
+  return new LectureQueue(async chunk => {
+    let result; const requestStarted = performance.now();
+    try { result = await api('/api/transcribe', { audio: chunk.audio, glossary, final: chunk.final }); }
+    catch (failure) {
+      if (chunk.final) {
+        transcript.set(chunk.id, { seconds: chunk.seconds, text: '[인식 실패 · 보관한 음성으로 재시도 가능]', final: false, failed: true });
+        render(); await flushRecord();
+      }
+      throw failure;
+    }
+    if (qwen) lastInferenceSeconds = (performance.now() - requestStarted) / 1000;
+    const previous = transcript.ordered().filter(x => x.final && !x.failed && x.seconds < chunk.seconds).at(-1)?.text || '';
+    const text = chunk.overlap ? removeOverlap(previous, result.text) : result.text;
+    if (text.trim()) transcript.set(chunk.id, { seconds: chunk.seconds, text, final: chunk.final, failed: false });
+    else if (chunk.final) transcript.items.delete(chunk.id);
+    render();
+    // Delete recovery audio only after the transcript reaches the record store.
+    if (chunk.final && !await flushRecord()) throw new Error('전사 저장 실패 · 음성은 보관됩니다.');
+  }, queueChanged, storage);
 }
 function enqueue(chunk) {
   const id = chunk.id || `packet-${chunk.sequence}`;
@@ -297,23 +327,7 @@ $('start').onclick = async () => {
       $('latency').textContent = `처리 ${Math.round(result.inferenceMs || 0)} ms · 전송/대기 ${packetDelay.toFixed(1)}초`;
       $('latency').title = '최근 200ms 음성 패킷의 처리/대기 시간입니다. 단어 인식 지연에는 모델의 문맥 대기 시간도 포함됩니다.';
     }, queueChanged);
-    else queue = new AudioQueue(async chunk => {
-      let result; const requestStarted = performance.now();
-      try { result = await api('/api/transcribe', { audio: chunk.audio, glossary, final: chunk.final }); }
-      catch (error) {
-        if (chunk.final) {
-          transcript.set(chunk.id, { seconds: chunk.seconds, text: transcript.items.get(chunk.id)?.text || '[이 구간은 인식 재시도가 필요합니다]', final: false }); render();
-        }
-        throw error;
-      }
-      if (qwen) lastInferenceSeconds = (performance.now() - requestStarted) / 1000;
-      if (transcript.items.get(chunk.id)?.failed) return;
-      const previous = transcript.ordered().filter(x => x.final && !x.failed && x.seconds < chunk.seconds).at(-1)?.text || '';
-      const text = chunk.overlap ? removeOverlap(previous, result.text) : result.text;
-      if (text.trim()) transcript.set(chunk.id, { seconds: chunk.seconds, text, final: chunk.final });
-      else if (chunk.final) transcript.items.delete(chunk.id);
-      render();
-    }, queueChanged);
+    else queue = makeLectureQueue(await AudioSpool.open(recordId), glossary);
     microphone = new Microphone();
     await microphone.start(enqueue, message => { error(message); if (mode === 'live') void stopLecture(); }, streaming ? (rate, callback) => new StreamingFrames(rate, callback) : qwen ? (rate, callback) => new Segmenter(rate, callback, { previewSeconds: 0.8, pauseSeconds: 0.5, maxSeconds: 6 }) : undefined, ({ throughSeconds }) => {
       if (mode !== 'live') return;
@@ -329,12 +343,12 @@ async function stopLecture() {
   const wasDemo = mode === 'demo'; mode = 'stopping'; controls(); $('status').textContent = '남은 구간 처리 중';
   clearInterval(timer); clearInterval(demoTimer);
   if (!wasDemo) { await microphone?.stop(); await queue?.settle(); await finalSummary(); }
-  mode = 'idle'; $('status').textContent = queue?.failed ? '처리 중단 · 재시도 가능' : '강의 종료'; $('notice').textContent = '전사와 문단 노트가 이 컴퓨터에 저장됩니다. 처리하지 못한 음성은 탭을 닫으면 사라집니다.'; changed(); controls(); await flushRecord();
+  mode = 'idle'; $('status').textContent = (queue?.failed || queue?.failures?.length) ? '강의 종료 · 일부 구간 재시도 가능' : '강의 종료'; $('notice').textContent = '전사와 문단 노트가 이 컴퓨터에 저장됩니다. Qwen 미처리 음성은 같은 브라우저와 주소에서 기록을 열어 다시 처리할 수 있습니다.'; changed(); controls(); await flushRecord();
 }
 $('stop').onclick = () => stopLecture();
 $('retry').onclick = async () => {
   error(''); mode = 'stopping'; controls(); $('status').textContent = '남은 구간 다시 처리 중';
-  await queue.retry(); await finalSummary(); mode = 'idle'; $('status').textContent = queue.failed ? '처리 실패 · 재시도 가능' : '처리 완료'; changed(); controls(); await flushRecord();
+  await queue.retry(); await finalSummary(); mode = 'idle'; $('status').textContent = (queue.failed || queue.failures?.length) ? '일부 구간 실패 · 재시도 가능' : '처리 완료'; changed(); controls(); await flushRecord();
 };
 $('demo').onclick = async () => {
   if (!await newLecture()) return;
