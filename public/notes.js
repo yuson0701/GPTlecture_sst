@@ -15,10 +15,10 @@ export function usageTotals(blocks) {
   return totals;
 }
 export function sourceBatch(items) {
-  const batch = []; let length = 0;
+  const batch = []; let length = 0, characters = 0;
   for (const item of items) {
-    if (batch.length && (length + item.text.length + 20 > 6400 || item.seconds - batch[0].seconds >= PARAPHRASE_SECONDS)) break;
-    batch.push(item); length += item.text.length + 20;
+    if (batch.length && (length + item.text.length + 20 > 6400 || (characters >= 80 && item.seconds - batch[0].seconds >= PARAPHRASE_SECONDS))) break;
+    batch.push(item); length += item.text.length + 20; characters += item.text.replace(/\s/g, '').length;
   }
   return batch;
 }

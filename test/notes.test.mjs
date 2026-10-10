@@ -21,6 +21,8 @@ test('automatic summaries prefer pauses and sentence endings, with a 90-second d
   assert.equal(summaryDue(start + 90000, start, []), false);
   // A long initial silence does not count as time spent explaining new content.
   assert.equal(summaryDue(start + 120000, start + 100000, sentence), false);
+  const afterLongGap = [{ seconds: 0, text: '네.' }, { ...sentence[0], seconds: 300 }];
+  assert.equal(sourceBatch(afterLongGap).length, 2, 'a tiny leftover must not block later lecture content');
   const items = Array.from({ length: 120 }, (_, seconds) => ({ seconds, text: '강의 문장입니다.' }));
   assert.equal(sourceBatch(items).length, 90);
   assert.equal(sourceBatch(items.slice(90)).length, 30);
