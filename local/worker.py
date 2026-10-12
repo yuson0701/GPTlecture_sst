@@ -6,11 +6,38 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import sys
 
 os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
 model = None
+# Leave room for Whisper's maximum vocabulary prompt and task/language tokens.
+WHISPER_TOKEN_LIMIT = 216
+
+
+def repetition_loop(text):
+    """Flag sustained adjacent phrase loops, not normal repeated lecture terms."""
+    words = re.findall(r'[^\W_]+', text.casefold(), flags=re.UNICODE)
+    for start in range(len(words)):
+        for width in range(1, min(16, (len(words) - start) // 4) + 1):
+            phrase = words[start:start + width]
+            if sum(map(len, phrase)) * 4 < 24:
+                continue
+            if all(words[start + width * n:start + width * (n + 1)] == phrase for n in range(1, 4)):
+                return True
+    return False
+
+
+def checked_whisper(decode, final=True):
+    # One retry for a final clip only. Never publish or feed a looping hypothesis
+    # to the next request; the lecture queue retains failed final audio for retry.
+    for retry in range(2 if final else 1):
+        text, segments = decode(bool(retry))
+        capped = any(len(s.get('tokens', [])) >= WHISPER_TOKEN_LIMIT for s in segments)
+        if not repetition_loop(text) and not capped:
+            return {'text': text.strip()}
+    raise RuntimeError('Whisper 반복 또는 길이 제한으로 이 구간을 확정하지 못했습니다. 음성은 보관되며 이후 구간은 계속 처리합니다.')
 
 
 def backend():
@@ -130,18 +157,26 @@ def dispatch(request):
         # MLX Whisper has no standalone VAD; reuse local Silero to reject non-speech.
         if not get_speech_timestamps(samples, VadOptions(min_silence_duration_ms=300)):
             return {'text': ''}
-        result = mlx_whisper.transcribe(samples, path_or_hf_repo=model, language=whisper_language, task='transcribe', temperature=0.0,
-                                        initial_prompt=request.get('glossary') or None,
-                                        condition_on_previous_text=False, without_timestamps=True, verbose=None)
-        return {'text': result['text'].strip()}
-    segments, _ = model.transcribe(
-        samples, language=whisper_language, task='transcribe', beam_size=1, best_of=1, temperature=0.0,
-        without_timestamps=True, vad_filter=True,
-        vad_parameters={'min_silence_duration_ms': 300},
-        initial_prompt=request.get('glossary') or None,
-        condition_on_previous_text=False,
-    )
-    return {'text': ' '.join(s.text.strip() for s in segments).strip()}
+        def decode(retry):
+            result = mlx_whisper.transcribe(
+                samples, path_or_hf_repo=model, language=whisper_language, task='transcribe',
+                temperature=0.2 if retry else 0.0, sample_len=WHISPER_TOKEN_LIMIT,
+                initial_prompt=None if retry else request.get('glossary') or None,
+                condition_on_previous_text=False, without_timestamps=True, verbose=None)
+            return result['text'], result.get('segments', [])
+    else:
+        def decode(retry):
+            segments, _ = model.transcribe(
+                samples, language=whisper_language, task='transcribe', beam_size=3 if retry else 1,
+                best_of=1, temperature=0.0, max_new_tokens=WHISPER_TOKEN_LIMIT,
+                without_timestamps=True, vad_filter=True,
+                vad_parameters={'min_silence_duration_ms': 300},
+                initial_prompt=None if retry else request.get('glossary') or None,
+                condition_on_previous_text=False,
+            )
+            segments = list(segments)
+            return ' '.join(s.text.strip() for s in segments), [{'tokens': getattr(s, 'tokens', [])} for s in segments]
+    return checked_whisper(decode, request.get('final', True))
 
 
 if __name__ == '__main__':

@@ -1,5 +1,28 @@
 # Lecture Note — Korean lecture transcription
 
+## Whisper repetition and note recovery
+
+Whisper results are checked for sustained adjacent phrase loops, including Korean
+and mixed English terminology. Final clips get at most one extra decode without
+the vocabulary prompt (MLX sampling at 0.2; faster-whisper beam search at 3).
+Drafts never retry. Both engines have a 216-token output bound; results that reach
+the bound are treated as incomplete. If the final still loops or hits the bound,
+it is marked for audio recovery rather than published as a reliable transcript.
+Recording and later clips continue, using the existing IndexedDB recovery queue.
+This is a heuristic: normal repeated terms and phrases said twice are preserved,
+but a phrase intentionally repeated many times may also be flagged for review.
+It does not correct misheard medical terminology or modify already saved text.
+
+Whisper and Qwen use the same ChatGPT note pipeline. A slow pre-pause final no
+longer blocks the normal 60–90 second deadline for the already completed prefix;
+the delayed audio stays out of that note until it finishes. Valid JSON wrapped in
+a Markdown code fence is accepted. During recording, malformed/incomplete notes
+retry the same source once after 15 seconds, preserving token accounting. Further
+failures and account/connection problems pause summaries with a visible message;
+no unlimited retries are made. Missing ChatGPT login, model selection, or text
+sharing permission is shown in the note status. Speech-model selection does not
+change that permission. No cloud speech service or Ollama is required.
+
 ## Choose Qwen or Whisper for each lecture
 
 This version preserves the timetable picker and course vocabulary changes from

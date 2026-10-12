@@ -29,6 +29,19 @@ export function summaryDue(now, firstPendingAt, items, { paused = false } = {}) 
   return paused || age >= PARAPHRASE_SECONDS * 1000 || (age >= 60000 && sentenceEnd);
 }
 
+// A delayed pre-pause decode must not disable the normal deadline for text that
+// is already complete. Keep chronological order and never summarize past a gap.
+export function automaticSummaryBatch(items, audio, boundary, now, started) {
+  const firstWaiting = Math.min(Infinity, ...audio.filter(x => x.final !== false).map(x => x.seconds));
+  const ready = items.filter(x => x.seconds < firstWaiting);
+  if (boundary !== null && firstWaiting > boundary) {
+    const paused = sourceBatch(ready.filter(x => x.seconds <= boundary));
+    if (paused.length && summaryDue(now, started + paused[0].seconds * 1000, paused, { paused: true })) return paused;
+  }
+  const batch = sourceBatch(ready);
+  return batch.length && summaryDue(now, started + batch[0].seconds * 1000, batch) ? batch : [];
+}
+
 export function validSections(sections) {
   const text = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
   return Array.isArray(sections) && sections.length > 0 && sections.length <= 5 && sections.every(s => s && text(s.title, 120) && Array.isArray(s.bullets) && s.bullets.length > 0 && s.bullets.length <= 6 && s.bullets.every(b => text(b, 1500))) && JSON.stringify(sections).length <= 10000;

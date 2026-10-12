@@ -9,8 +9,12 @@ export async function chatgptSummary({ transcript, model, consent }, { chatgpt, 
   });
   const usage = reportedUsage(result.usage);
   const invalid = () => Object.assign(new ChatGPTError('invalid_paragraph', 'Invalid paragraph'), { usage });
+  if (typeof result.text !== 'string') throw invalid();
   let note;
-  try { note = JSON.parse(result.text); } catch { throw invalid(); }
+  // Some text models wrap otherwise valid JSON in a Markdown code fence.
+  // Accept that complete wrapper, but never salvage partial JSON or prose.
+  const response = result.text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, '$1');
+  try { note = JSON.parse(response); } catch { throw invalid(); }
   // Accept older single-topic responses while asking new requests for topic sections.
   const sections = note?.sections ?? (note?.title && note?.bullets ? [{ title: note.title, bullets: note.bullets }] : null);
   if (!validSections(sections) || (note.cleaned !== undefined && (typeof note.cleaned !== 'string' || !note.cleaned.trim() || note.cleaned.length > 10000))) throw invalid();

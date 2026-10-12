@@ -1,12 +1,32 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sourceBatch, summaryDue, usageTotals, blockMarkdown } from '../public/notes.js';
+import { sourceBatch, summaryDue, automaticSummaryBatch, usageTotals, blockMarkdown } from '../public/notes.js';
 import { streamResponse } from '../vendor/siwc-local/dist/responses.js';
 import { chatgptSummary } from '../local/summary.mjs';
 import { publicChatGPTError } from '../local/chatgpt.mjs';
 import { validateRecord } from '../local/records.mjs';
 
 const usage = { input_tokens: 1200, output_tokens: 300, total_tokens: 1500 };
+test('a delayed Whisper final cannot starve the deadline for completed text', () => {
+  const items = [0, 8, 16].map(seconds => ({ seconds, text: '칼슘 채널과 심근 수축의 관계에 대한 강의 내용입니다. '.repeat(4) }));
+  const audio = [{ seconds: 16, final: true }, { seconds: 24, final: false }];
+  assert.deepEqual(automaticSummaryBatch(items, audio, 30, 30000, 0), [], 'pause must initially wait for its final');
+  assert.deepEqual(automaticSummaryBatch(items, audio, 30, 90000, 0), items.slice(0, 2), 'send only the completed prefix at the deadline');
+  assert.deepEqual(automaticSummaryBatch(items, [], 30, 30000, 0), items, 'drained pause sends the entire block');
+  assert.deepEqual(automaticSummaryBatch(items, [{ seconds: 0, final: true }], 30, 90000, 0), [], 'do not summarize past unfinished audio');
+  assert.deepEqual(automaticSummaryBatch(items, [{ seconds: 24, final: false }], 20, 30000, 0), items, 'later drafts do not hold earlier finals');
+});
+
+test('complete fenced summary JSON is accepted but broken responses remain failures', async () => {
+  const sections = [{ title: '칼슘 조절', bullets: ['Troponin C에 칼슘이 결합합니다.'] }];
+  const run = text => chatgptSummary({ transcript: '강의 원문', model: 'mock', consent: true }, {
+    chatgpt: { respond: async () => ({ text, usage }) },
+  });
+  assert.deepEqual((await run('```json\n' + JSON.stringify({ sections }) + '\n```')).sections, sections);
+  for (const text of ['```json\n{"sections": [', 'Here is your note: ' + JSON.stringify({ sections }), '{}']) {
+    await assert.rejects(run(text), error => error.code === 'invalid_paragraph' && error.usage.total_tokens === 1500);
+  }
+});
 test('automatic summaries prefer pauses and sentence endings, with a 90-second deadline', () => {
   const start = 100000, sentence = [{ seconds: 0, text: '강의 내용을 설명합니다. '.repeat(12) }];
   const fragment = [{ seconds: 0, text: '아직 설명이 이어지고 있어서 '.repeat(12) }];

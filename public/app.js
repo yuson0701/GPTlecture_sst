@@ -1,8 +1,8 @@
 import { initSpeechChoice } from './speech-choice.js';
 import { followLatest } from './follow-scroll.js';
 import { initLecturePicker } from './lecture-picker.js';
-import { sourceBatch, summaryDue, reportedUsage, usageTotals, blockMarkdown } from './notes.js';
-import { initChatGPT, summaryOptions, summaryReady, pauseChatGPT } from './chatgpt.js';
+import { sourceBatch, automaticSummaryBatch, reportedUsage, usageTotals, blockMarkdown } from './notes.js';
+import { initChatGPT, summaryOptions, summaryReady, summaryUnavailableReason, pauseChatGPT } from './chatgpt.js';
 import { Transcript, timestamp } from './transcript.js';
 import { Microphone, removeOverlap, Segmenter } from './audio.js';
 import { AudioSpool, LectureQueue } from './lecture-queue.js';
@@ -11,7 +11,7 @@ const $ = id => document.getElementById(id);
 let transcript = new Transcript(), microphone, queue, timer, demoTimer, mode = 'idle', started = 0, elapsed = 0, summaryBlocks = [], configured = false, summarizing = false;
 const summarized = new Set();
 const follow = followLatest($('workspace'), () => !$('workspace').hidden && ['live', 'demo', 'stopping'].includes(mode));
-let silenceBoundary = null, lastInferenceSeconds = null;
+let silenceBoundary = null, lastInferenceSeconds = null, summaryRetryAt = 0;
 let qwen = false, streaming = false, streamingRows = new Map(), finalRows = 0, streamSession = null;
 const demoLines = ['오늘은 경제학의 기본 개념인 기회비용에 대해 알아보겠습니다. 기회비용은 어떤 선택을 했을 때 포기한 대안 중 가장 가치 있는 것의 가치입니다.', '예를 들어 두 시간 동안 아르바이트를 하면 2만 원을 벌 수 있지만, 그 시간에 시험 공부를 선택했다면 포기한 2만 원이 기회비용에 포함됩니다.', '여기서 중요한 것은 모든 대안의 가치를 더하는 것이 아니라, 포기한 대안 중 가장 좋은 하나만 고려한다는 점입니다.', '이미 지출해서 회수할 수 없는 비용은 매몰비용이라고 합니다. 합리적인 의사결정에서는 매몰비용보다 앞으로 발생할 비용과 편익을 비교해야 합니다.'];
 const demoParaphrases = ['기회비용은 선택 때문에 포기한 대안 중 가장 가치 있는 하나를 뜻합니다.', '공부 때문에 아르바이트를 하지 못했다면, 벌 수 있었던 2만 원이 기회비용에 포함됩니다.', '기회비용은 포기한 모든 대안의 합이 아니라, 가장 좋은 대안 하나의 가치입니다.', '매몰비용은 이미 써서 돌려받을 수 없는 돈입니다. 선택할 때는 앞으로의 비용과 이익을 비교해야 합니다.'];
@@ -141,11 +141,16 @@ function controls() {
   lecturePicker.locked(active || recordLoaded || !!transcript.items.size);
   $('export').disabled = !transcript.items.size;
   $('summarize').disabled = !summaryReady() || summarizing || mode === 'demo' || !pendingSummary().length;
+  if (!summarizing && mode !== 'demo') {
+    const status = $('summary-status'), unavailable = summaryUnavailableReason();
+    if (unavailable) { status.textContent = unavailable; status.dataset.setup = 'true'; }
+    else if (status.dataset.setup) { status.textContent = ''; delete status.dataset.setup; }
+  }
   $('indicator').className = ['live', 'demo'].includes(mode) ? 'live' : '';
 }
 async function api(path, data) {
   const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data), signal: AbortSignal.timeout(130000) });
-  const result = await response.json(); if (!response.ok) throw Object.assign(new Error(result.error || '요청 실패'), { usage: reportedUsage(result.usage) }); return result;
+  const result = await response.json(); if (!response.ok) throw Object.assign(new Error(result.error || '요청 실패'), { code: result.code, usage: reportedUsage(result.usage) }); return result;
 }
 function render() {
   changed();
@@ -236,7 +241,7 @@ function reset() {
   follow.reset();
   $('lecture-options').open = false;
   queue?.storage?.db?.close();
-  silenceBoundary = null; lastInferenceSeconds = null;
+  silenceBoundary = null; lastInferenceSeconds = null; summaryRetryAt = 0;
   transcript = new Transcript(); streamingRows = new Map(); finalRows = 0; streamSession = null; summarized.clear(); summaryBlocks = []; elapsed = 0; queue = null; $('latency').textContent = ''; error('');
   $('summary').textContent = '강의 내용을 기다리고 있습니다.'; $('transcript').textContent = '말씀하시면 여기에 실시간 초안이 나타납니다. 조용할 때는 기다립니다.'; $('timer').textContent = '00:00'; $('count').textContent = '0개 구간'; $('summary-status').textContent = '';
 }
@@ -251,6 +256,7 @@ function pendingSummary() {
 }
 async function summarize({ throughSeconds = Infinity } = {}) {
   if (summarizing || mode === 'demo' || !summaryReady()) return false;
+  summaryRetryAt = 0;
   let block = summaryBlocks.find(item => item.state === 'failed');
   if (!block) {
     const batch = sourceBatch(pendingSummary().filter(item => item.seconds <= throughSeconds));
@@ -269,7 +275,16 @@ async function summarize({ throughSeconds = Infinity } = {}) {
     block.items.forEach(x => summarized.add(x.id)); renderSummary(block);
     $('summary-status').textContent = `블록 ${block.id} 완료 · ${summaryLabels[result.method]}`;
     return true;
-  } catch (e) { block.attempts[attempt] = reportedUsage(e.usage); pauseChatGPT(e.message); block.state = 'failed'; block.warning = e.message; renderSummary(block); $('summary-status').textContent = '블록 처리 실패 · 지금 요약으로 다시 시도'; return false; }
+  } catch (e) {
+    block.attempts[attempt] = reportedUsage(e.usage); block.state = 'failed'; block.warning = e.message;
+    // A malformed/incomplete note is not a revoked login or consent. Retry the
+    // same source once, with a delay, rather than silently disabling all notes.
+    if (mode === 'live' && ['invalid_paragraph', 'response_incomplete'].includes(e.code) && block.attempts.length === 1) {
+      summaryRetryAt = Date.now() + 15000;
+      block.warning += ' 잠시 후 한 번 다시 시도합니다.';
+    } else pauseChatGPT(e.message);
+    renderSummary(block); $('summary-status').textContent = block.warning; return false;
+  }
   finally { summarizing = false; controls(); }
 }
 
@@ -281,19 +296,15 @@ async function finalSummary() {
 // New speech after that boundary must not get mixed into the paused paragraph.
 async function autoSummarize() {
   if (mode !== 'live' || summarizing || !summaryReady() || queue?.failed) return;
-  if (silenceBoundary !== null) {
-    const boundary = silenceBoundary;
-    const pendingAudio = queue?.items.some(item => item.seconds <= boundary && (streaming || item.final !== false));
-    if (pendingAudio) return;
-    const pausedItems = sourceBatch(pendingSummary().filter(item => item.seconds <= boundary));
-    if (pausedItems.length && summaryDue(Date.now(), started + pausedItems[0].seconds * 1000, pausedItems, { paused: true })) {
-      await summarize({ throughSeconds: boundary });
-      return;
-    }
-    silenceBoundary = null;
+  if (summaryRetryAt) {
+    if (Date.now() < summaryRetryAt) return;
+    await summarize(); return;
   }
-  const items = sourceBatch(pendingSummary());
-  if (items.length && summaryDue(Date.now(), started + items[0].seconds * 1000, items)) await summarize();
+  const audio = streaming ? (queue?.items || []).map(x => ({ ...x, final: true })) : queue?.items || [];
+  const items = automaticSummaryBatch(pendingSummary(), audio, silenceBoundary, Date.now(), started);
+  if (items.length) await summarize({ throughSeconds: items.at(-1).seconds });
+  if (silenceBoundary !== null && !audio.some(x => x.final !== false && x.seconds <= silenceBoundary) &&
+      !pendingSummary().some(x => x.seconds <= silenceBoundary)) silenceBoundary = null;
 }
 function queueChanged() {
   const waiting = queue.waiting.length;
@@ -373,7 +384,7 @@ async function stopLecture() {
   const wasDemo = mode === 'demo'; mode = 'stopping'; controls(); $('status').textContent = '남은 구간 처리 중';
   clearInterval(timer); clearInterval(demoTimer);
   if (!wasDemo) { await microphone?.stop(); await queue?.settle(); await finalSummary(); }
-  mode = 'idle'; $('status').textContent = (queue?.failed || queue?.failures?.length) ? '강의 종료 · 일부 구간 재시도 가능' : '강의 종료'; $('notice').textContent = '전사와 문단 노트가 이 컴퓨터에 저장됩니다. Qwen 미처리 음성은 같은 브라우저와 주소에서 기록을 열어 다시 처리할 수 있습니다.'; changed(); controls(); await flushRecord();
+  mode = 'idle'; $('status').textContent = (queue?.failed || queue?.failures?.length) ? '강의 종료 · 일부 구간 재시도 가능' : '강의 종료'; $('notice').textContent = '전사와 문단 노트가 이 컴퓨터에 저장됩니다. 미처리 음성은 같은 브라우저와 주소에서 기록을 열어 다시 처리할 수 있습니다.'; changed(); controls(); await flushRecord();
 }
 $('stop').onclick = () => stopLecture();
 $('retry').onclick = async () => {
