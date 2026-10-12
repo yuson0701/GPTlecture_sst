@@ -1,4 +1,5 @@
 """Automatic timetable selection, guarded against user edits and saved records."""
+import os
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ rows = [
 ]
 base = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:3010'
 with sync_playwright() as p:
-    browser = p.chromium.launch()
+    browser = p.chromium.launch(executable_path=os.environ.get('CHROMIUM_BIN'))
     page = browser.new_page()
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
@@ -40,7 +41,8 @@ with sync_playwright() as p:
     expect(page.locator('#title')).to_have_value('호흡 · 천식')
     assert 'asthma' in page.locator('#glossary').input_value()
     expect(page.locator('.usage-strip')).to_have_count(0)
-    expect(page.locator('#summary-status')).to_have_text('')
+    expect(page.locator('#summary-status')).to_have_text('요약하려면 설정에서 ChatGPT에 연결하세요.')
+    expect(page.locator('#summary-status')).not_to_contain_text('1분 15초마다')
     # Opening a saved record must not replace its lecture or edited terminology.
     saved_id = str(uuid.uuid4())
     saved = {'revision': 0, 'title': 'Saved first period', 'glossary': 'saved custom terms',
