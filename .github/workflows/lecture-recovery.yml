@@ -1,12 +1,12 @@
 name: Lecture recovery checks
 on:
   push:
-    branches: [fix/long-lecture-recovery]
+    branches: [fix/long-lecture-recovery, feature/local-model-choice]
   pull_request:
     paths:
       - 'public/**'
-      - 'local/qwen_asr.py'
-      - 'scripts/qwen_decode.py'
+      - 'local/**'
+      - 'scripts/**'
       - 'test/**'
       - 'server.mjs'
       - '.github/workflows/lecture-recovery.yml'
@@ -27,10 +27,12 @@ jobs:
           python-version: '3.12'
       - run: npm ci
       - run: npm run check
+      - run: python -m pip install numpy huggingface_hub playwright openpyxl
       - run: npm test
-      - run: python -m pip install numpy huggingface_hub playwright
       - run: python -m unittest discover -s test -p 'qwen_test.py'
       - run: python -m unittest discover -s test -p 'qwen_decode_test.py'
+      - run: python -m unittest discover -s test -p 'worker_test.py'
+      - run: python -m unittest discover -s test -p 'setup_whisper_test.py'
       - run: python -m playwright install --with-deps chromium webkit
       - name: Browser capture, silence summaries, and disk recovery
         env:
@@ -46,3 +48,8 @@ jobs:
           python test/browser_follow.py http://127.0.0.1:3010
           python test/browser_recovery.py http://127.0.0.1:3010
           python test/browser_silence.py http://127.0.0.1:3010
+          python test/browser_whisper_notes.py http://127.0.0.1:3010
+          python test/browser_models.py http://127.0.0.1:3010
+          python test/browser_schedule.py http://127.0.0.1:3010
+          python test/browser_blocks.py http://127.0.0.1:3010
+          python test/browser_library.py

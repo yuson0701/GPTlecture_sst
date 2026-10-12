@@ -147,3 +147,16 @@ test('Qwen capture bounds context to six seconds and reduces preview frequency',
   assert.ok(packets.filter(x => !x.final).length < 25);
   assert.equal(finals[1].overlap, true);
 });
+
+test('API forwards explicit model and always uses automatic language; rejects invalid choices', async t => {
+  const calls = [];
+  const { post } = await serve(t, { transcriber: { request: async (action, body) => { calls.push(body); return { loaded: true }; }, close() {} } });
+  assert.equal((await post('/api/session', { glossary: 'ECG', sttModel: 'whisper', language: 'auto' })).status, 200);
+  assert.equal(calls[0].sttModel, 'whisper'); assert.equal(calls[0].language, 'auto');
+  assert.equal((await post('/api/transcribe', { audio, glossary: '', sttModel: 'qwen', language: 'en' })).status, 200);
+  assert.equal(calls[1].sttModel, 'qwen'); assert.equal(calls[1].language, 'auto');
+  for (const body of [{ sttModel: '/tmp/model' }, { language: 'unsupported' }]) {
+    assert.equal((await post('/api/session', { glossary: '', ...body })).status, 400);
+  }
+  assert.equal(calls.length, 2);
+});

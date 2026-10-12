@@ -1,14 +1,14 @@
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { LocalTranscriber } from './local/transcriber.mjs';
+import { ModelTranscriber, MODEL_IDS } from './local/model-choice.mjs';
 import { RecordStore } from './local/records.mjs';
 import { ScheduleStore } from './local/schedule.mjs';
 import { chatgptSummary } from './local/summary.mjs';
 import { createChatGPTService, publicChatGPTError } from './local/chatgpt.mjs';
 
-const files = new Map([['/', ['index.html', 'text/html']], ...['app.js', 'lecture-picker.js', 'lecture-vocabulary.js', 'follow-scroll.js', 'notes.js', 'chatgpt.js', 'transcript.js', 'audio.js', 'lecture-queue.js', 'capture-worklet.js', 'streaming.js'].map(file => ['/' + file, [file, 'text/javascript']]), ['/style.css', ['style.css', 'text/css']]]);
-export function createApp({ env = process.env, transcriber = new LocalTranscriber(env), chatgpt = createChatGPTService(), schedule = new ScheduleStore(env) } = {}) {
+const files = new Map([['/', ['index.html', 'text/html']], ...['app.js', 'speech-choice.js', 'lecture-picker.js', 'lecture-vocabulary.js', 'follow-scroll.js', 'notes.js', 'chatgpt.js', 'transcript.js', 'audio.js', 'lecture-queue.js', 'capture-worklet.js', 'streaming.js'].map(file => ['/' + file, [file, 'text/javascript']]), ['/style.css', ['style.css', 'text/css']]]);
+export function createApp({ env = process.env, transcriber = new ModelTranscriber(env), chatgpt = createChatGPTService(), schedule = new ScheduleStore(env) } = {}) {
   const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
   const records = new RecordStore(env.LECTURE_DATA_DIR || fileURLToPath(new URL('./data/lectures', import.meta.url)));
   let sttBusy = false, summaryBusy = false;
@@ -40,6 +40,10 @@ export function createApp({ env = process.env, transcriber = new LocalTranscribe
         catch (e) { return json(res, e.status || 500, { error: e.status ? e.message : '저장된 기록을 읽지 못했습니다.' }); }
       }
       if (req.method === 'GET' && req.url === '/api/config') {
+        if (transcriber.catalog) {
+          const models = await transcriber.catalog(), selected = models.find(x => x.id === transcriber.defaultModel);
+          return json(res, 200, { models, defaultModel: selected.id, configured: selected.available, reason: selected.reason, streaming: selected.backend === 'sherpa', backend: selected.backend, model: selected.label, local: true, summary: 'chatgpt', summaryLocal: false });
+        }
         let status; try { status = await transcriber.request('status'); } catch { status = { available: false }; }
         return json(res, 200, { configured: status.available, reason: status.reason, streaming, backend: qwen ? 'qwen-mlx' : undefined, fineTuned: qwen && status.fineTuned === true, model: qwen ? `Qwen3-ASR · Apple GPU · ${env.QWEN_ASR_MODEL?.match(/Qwen3-ASR-(0\.6B|1\.7B)/)?.[1] || '1.7B'}${status.fineTuned ? ' · 강의 미세조정' : ''}` : streaming ? 'Korean Zipformer · 실시간 스트리밍' : (env.STT_BACKEND || env.WHISPER_BACKEND) === 'mlx' ? `MLX · Apple GPU · ${env.MLX_WHISPER_MODEL || 'whisper-turbo'}` : `faster-whisper · ${env.WHISPER_MODEL || 'large-v3-turbo'}`, summary: 'chatgpt', local: true, summaryLocal: false });
       }
@@ -75,19 +79,22 @@ export function createApp({ env = process.env, transcriber = new LocalTranscribe
         catch (e) { return json(res, e.status || 500, { error: e.status ? e.message : '기록을 저장하지 못했습니다. 디스크 공간과 권한을 확인하세요.' }); }
       }
       if (req.url === '/api/session' || req.url === '/api/transcribe') {
+        if (body.sttModel !== undefined && !MODEL_IDS.includes(body.sttModel)) return json(res, 400, { error: 'Invalid speech model' });
+        if (body.language !== undefined && !['auto', 'ko', 'en'].includes(body.language)) return json(res, 400, { error: 'Invalid recognition language' });
+        const packetMode = body.sttModel ? body.sttModel === 'sherpa' : streaming;
         if (typeof body.glossary !== 'string' || body.glossary.length > 1500) return json(res, 400, { error: '용어는 1,500자 이내로 입력해 주세요.' });
         if (req.url === '/api/transcribe') {
           if (body.final !== undefined && typeof body.final !== 'boolean') return json(res, 400, { error: 'Invalid transcription mode' });
           if (typeof body.audio !== 'string' || body.audio.length > 640000 || !/^[A-Za-z0-9+/]*={0,2}$/.test(body.audio) || body.audio.length % 4) return json(res, 400, { error: 'Invalid PCM audio' });
           const audio = Buffer.from(body.audio, 'base64');
-          if (streaming) {
+          if (packetMode) {
             if (typeof body.session !== 'string' || !Number.isSafeInteger(body.sequence) || body.sequence < 0 || audio.length > 64000 || audio.length % 2 || (!audio.length && !body.final)) return json(res, 400, { error: 'Invalid streaming input' });
           } else if (audio.length < 3200 || audio.length > 480000 || audio.length % 2) return json(res, 400, { error: 'Invalid PCM audio length' });
         }
         if (sttBusy) return json(res, 429, { error: '음성 처리 중입니다. 다른 강의 탭을 종료해 주세요.' });
         sttBusy = true;
-        try { const result = await transcriber.request(req.url === '/api/session' ? 'load' : 'transcribe', { audio: body.audio, glossary: body.glossary, final: body.final !== false, session: body.session, sequence: body.sequence }); return json(res, 200, result); }
-        catch (error) { return json(res, 503, { error: error.message }); }
+        try { const result = await transcriber.request(req.url === '/api/session' ? 'load' : 'transcribe', { sttModel: body.sttModel, language: 'auto', audio: body.audio, glossary: body.glossary, final: body.final !== false, session: body.session, sequence: body.sequence }); return json(res, 200, result); }
+        catch (error) { return json(res, error.status === 400 ? 400 : 503, { error: error.message }); }
         finally { sttBusy = false; }
       }
       if (typeof body.transcript !== 'string' || !body.transcript.trim() || body.transcript.length > 7000 || typeof body.previous !== 'string' || body.previous.length > 6000) return json(res, 400, { error: 'Invalid summary input' });

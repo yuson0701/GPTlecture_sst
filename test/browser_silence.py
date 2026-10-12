@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory() as tmp, sync_playwright() as p:
             if len(finals) == 1:
                 held.append(route)
             else:
-                route.fulfill(json={'text': f'확정 문장 {len(finals)}입니다.'})
+                route.fulfill(json={'text': f'확정 문장 {len(finals)}입니다. ' + '심장의 활동전위는 이온 통로의 개폐에 따라 변화하며 수축과 이완을 조절합니다. 심전도에서는 이러한 전기적 활동을 파형으로 관찰하고 심박수와 전도 이상을 평가합니다. 중요한 개념을 사례와 함께 설명합니다.'})
         else:
             route.fulfill(json={'text': '초안입니다.'})
     def summarize(route):
@@ -54,7 +54,7 @@ with tempfile.TemporaryDirectory() as tmp, sync_playwright() as p:
     expect(page.locator('#stop')).to_be_enabled()
     expect(page.locator('#status')).to_contain_text('대기')
     assert not summaries, 'Pause must wait for pre-pause audio to finish transcription'
-    held[0].fulfill(json={'text': '확정 문장 1입니다.'})
+    held[0].fulfill(json={'text': '확정 문장 1입니다. ' + '심장의 전기적 활동에 대한 설명입니다. ' * 8})
     expect(page.locator('.summary-block')).to_have_count(1, timeout=4000)
     assert len(finals) >= 3, 'Multiple final chunks must survive the held first request'
     for n in range(1, len(finals) + 1):
@@ -62,7 +62,7 @@ with tempfile.TemporaryDirectory() as tmp, sync_playwright() as p:
     page.wait_for_timeout(2500)
     assert len(summaries) == 1, 'Ongoing silence must not create repeated summaries'
     expect(page.locator('#stop')).to_be_enabled()
-    # Second speech burst re-arms the five-second silence trigger, well before 75s.
+    # Second speech burst re-arms the five-second silence trigger, well before the continuous-speech deadline.
     expect(page.locator('.summary-block')).to_have_count(2, timeout=16000)
     assert not set(summaries[0]['transcript'].splitlines()) & set(summaries[1]['transcript'].splitlines())
     page.locator('#stop').click()

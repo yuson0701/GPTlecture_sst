@@ -15,6 +15,13 @@ export function summaryOptions() {
 export function summaryReady() {
   return session.status === 'connected' && session.sharing && summaryOptions().consent && !!summaryOptions().model;
 }
+export function summaryUnavailableReason() {
+  if (session.status !== 'connected') return '요약하려면 설정에서 ChatGPT에 연결하세요.';
+  if (!session.sharing) return '설정에서 ChatGPT 구독 사용 권한을 확인하세요.';
+  if (!summaryOptions().model) return '설정에서 ChatGPT 요약 모델을 선택하세요.';
+  if (!summaryOptions().consent) return '설정에서 강의 텍스트 전송을 허용하면 요약이 시작됩니다.';
+  return '';
+}
 export function pauseChatGPT(message) {
   $('chatgpt-consent').checked = false;
   $('chatgpt-message').textContent = message + ' 원문은 보관됩니다. 연결을 확인한 뒤 자동 정리를 다시 허용해 주세요.';

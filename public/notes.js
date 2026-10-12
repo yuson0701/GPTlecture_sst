@@ -1,4 +1,4 @@
-export const PARAPHRASE_SECONDS = 75;
+export const PARAPHRASE_SECONDS = 90;
 
 export function reportedUsage(value) {
   if (!value || !['input_tokens', 'output_tokens', 'total_tokens'].every(k => Number.isSafeInteger(value[k]) && value[k] >= 0) || value.input_tokens + value.output_tokens !== value.total_tokens) return null;
@@ -15,14 +15,32 @@ export function usageTotals(blocks) {
   return totals;
 }
 export function sourceBatch(items) {
-  const batch = []; let length = 0;
+  const batch = []; let length = 0, characters = 0;
   for (const item of items) {
-    if (batch.length && (length + item.text.length + 20 > 6400 || item.seconds - batch[0].seconds >= PARAPHRASE_SECONDS)) break;
-    batch.push(item); length += item.text.length + 20;
+    if (batch.length && (length + item.text.length + 20 > 6400 || (characters >= 80 && item.seconds - batch[0].seconds >= PARAPHRASE_SECONDS))) break;
+    batch.push(item); length += item.text.length + 20; characters += item.text.replace(/\s/g, '').length;
   }
   return batch;
 }
-export function summaryDue(now, lastRequest) { return now - lastRequest >= PARAPHRASE_SECONDS * 1000; }
+export function summaryDue(now, firstPendingAt, items, { paused = false } = {}) {
+  if (!items.length || items.reduce((n, item) => n + item.text.replace(/\s/g, '').length, 0) < 80) return false;
+  const age = now - firstPendingAt;
+  const sentenceEnd = /[.!?。！？][”’"')\]]*$/.test(items.at(-1).text.trim());
+  return paused || age >= PARAPHRASE_SECONDS * 1000 || (age >= 60000 && sentenceEnd);
+}
+
+// A delayed pre-pause decode must not disable the normal deadline for text that
+// is already complete. Keep chronological order and never summarize past a gap.
+export function automaticSummaryBatch(items, audio, boundary, now, started) {
+  const firstWaiting = Math.min(Infinity, ...audio.filter(x => x.final !== false).map(x => x.seconds));
+  const ready = items.filter(x => x.seconds < firstWaiting);
+  if (boundary !== null && firstWaiting > boundary) {
+    const paused = sourceBatch(ready.filter(x => x.seconds <= boundary));
+    if (paused.length && summaryDue(now, started + paused[0].seconds * 1000, paused, { paused: true })) return paused;
+  }
+  const batch = sourceBatch(ready);
+  return batch.length && summaryDue(now, started + batch[0].seconds * 1000, batch) ? batch : [];
+}
 
 export function validSections(sections) {
   const text = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;

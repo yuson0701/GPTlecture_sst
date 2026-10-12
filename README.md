@@ -1,14 +1,83 @@
 # Lecture Note — Korean lecture transcription
 
+## Whisper repetition and note recovery
+
+Whisper results are checked for sustained adjacent phrase loops, including Korean
+and mixed English terminology. Final clips get at most one extra decode without
+the vocabulary prompt (MLX sampling at 0.2; faster-whisper beam search at 3).
+Drafts never retry. Both engines have a 216-token output bound; results that reach
+the bound are treated as incomplete. If the final still loops or hits the bound,
+it is marked for audio recovery rather than published as a reliable transcript.
+Recording and later clips continue, using the existing IndexedDB recovery queue.
+This is a heuristic: normal repeated terms and phrases said twice are preserved,
+but a phrase intentionally repeated many times may also be flagged for review.
+It does not correct misheard medical terminology or modify already saved text.
+
+Whisper and Qwen use the same ChatGPT note pipeline. A slow pre-pause final no
+longer blocks the normal 60–90 second deadline for the already completed prefix;
+the delayed audio stays out of that note until it finishes. Valid JSON wrapped in
+a Markdown code fence is accepted. During recording, malformed/incomplete notes
+retry the same source once after 15 seconds, preserving token accounting. Further
+failures and account/connection problems pause summaries with a visible message;
+no unlimited retries are made. Missing ChatGPT login, model selection, or text
+sharing permission is shown in the note status. Speech-model selection does not
+change that permission. No cloud speech service or Ollama is required.
+
+## Choose Qwen or Whisper for each lecture
+
+This version preserves the timetable picker and course vocabulary changes from
+commit `c346313`. Before recording, use **음성 모델** above the timetable to choose
+**Qwen3-ASR · 내 강의 모델** or **Whisper · Apple GPU**. Language recognition is
+always automatic, including retries of older clips. Both engines transcribe
+locally; this does not enable an OpenAI transcription API or Ollama.
+
+On your Apple Silicon Mac, keep your existing Qwen installation and add Whisper:
+
+```sh
+npm run setup:whisper
+npm start
+```
+
+Stop a running server before restarting it, then refresh the browser. The installer
+uses `.venv-whisper`, downloads `mlx-community/whisper-turbo`, verifies GPU loading,
+and saves only Whisper-specific settings. It leaves Qwen paths, adapter settings,
+and `PYTHON_BIN` intact. Initial installation requires internet; lecture recognition
+uses cached weights only. If Qwen is not installed, run `npm run setup:qwen`.
+Unavailable choices show their setup command; **설치 상태 새로고침** checks again.
+Find this button under **설정 → 음성 인식 · 저장 정보**. The main screen keeps the
+recording controls and model choice visible. Expand **시간표 · 전공 용어** for course
+selection and vocabulary. Token usage is retained in saved records and exports, without an on-screen menu. Errors remain visible
+without opening settings.
+
+The model is fixed during a lecture, saved in its record, and attached to pending
+audio clips. Reopening a record restores that model for retry; language is automatic; old
+records without model metadata require an explicit model choice. Your last selection
+is remembered for the next new lecture. Only one recognition model is loaded at a
+time: switching waits for the old Python process to exit before loading the next.
+This is a choice of engines, not simultaneous dual-model transcription or automatic
+fallback. Switching does not retranscribe successful old segments, whose audio was
+already removed by recovery storage. No accuracy advantage is claimed without a
+comparison on your own recordings.
+
+### Ideas adapted from meeting-transcriber
+
+Reviewed [Recap / meeting-transcriber](https://github.com/notadev-iamaura/meeting-transcriber):
+its local model selection, setup-readiness feedback, job-specific model snapshots,
+and sequential model loading informed this implementation. The implementation here
+is original; no upstream source files or dependencies are copied. Existing vocabulary
+hints are passed to both Qwen and Whisper. Recap's offline batch cooldowns, local LLMs,
+cloud STT, and aggressive repetition deletion are not enabled in this live lecture
+app. Its small meeting benchmarks do not establish accuracy on these lectures.
+
 Local Korean speech recognition and lecture notes, with no API key or cloud speech service.
 
 ## Start page and saved lectures
 
-Branch: **feature/chatgpt-paraphrases**, based on the saved-lecture branch. Existing speech-model settings are preserved.
+Branch: **feature/local-model-choice**, based on the latest lecture recovery and timetable changes. Existing speech-model settings are preserved.
 
 ```sh
 git fetch origin
-git switch feature/chatgpt-paraphrases
+git switch feature/local-model-choice
 npm ci
 npm start
 ```
@@ -23,7 +92,20 @@ Persistence QA: `CHROMIUM_BIN=/path/to/chromium python3 test/browser_library.py`
 
 ## Lecture schedule and vocabulary hints
 
-Choose **새 강의 시작 → 시간표에서 강의 선택 → Excel 시간표 불러오기** and select your university `.xlsx` timetable (up to 2 MB). Filter by course, date, or lecture/instructor name, select a lecture, review the suggested terms, then click **제목·추천 용어 적용**. Edit **음성 인식에 사용할 용어** with terms from your slides before starting the recording; separate terms with commas or newlines.
+Opening **새 강의** automatically chooses the saved lecture whose class start is nearest to the current **Asia/Seoul** time, then fills its title and suggested vocabulary. It checks again immediately before recording if you have not manually edited the title, vocabulary, or selection. Saved recordings are never reassigned. It compares the complete saved timetable across dates, including past and future classes, so a day without lectures still gets the nearest class and its vocabulary. An empty or invalid timetable leaves the fields blank. Equal distances prefer the earlier start. Multi-period entries such as `1-3` match any covered period.
+
+| Period | Start (Korea time) |
+| --- | --- |
+| 1 | 08:30 |
+| 2 | 09:30 |
+| 3 | 10:40 |
+| 4 | 11:40 |
+| 5 | 13:30 |
+| 6 | 14:30 |
+| 7 | 15:30 |
+| 8 | 16:30 |
+
+Expand **시간표 · 전공 용어** to override the choice or edit the suggested terms. The language selector and Excel upload control have been removed. Automatic selection uses the timetable already saved in `data/schedule.json` (or `LECTURE_SCHEDULE_FILE`). To replace the timetable outside the UI, run `python3 scripts/import_schedule.py /path/to/timetable.xlsx --output data/schedule.json`, then reload the page.
 
 The importer reads the **전체** sheet and the columns **날짜, 교시, 과목명, 강의명, 교수님**. A workbook with only one sheet can use another sheet name. It ignores student assignment columns and does not duplicate entries from the course/weekly sheets. It preserves class periods rather than guessing clock times. Missing course names appear as **미분류**. Invalid imports leave the previous timetable intact.
 
@@ -140,7 +222,7 @@ Enter a lecture title, click **강의 시작**, then **종료** when finished. S
 
 ## Block-by-block notes
 
-Finalized speech is grouped into a new block every **75 seconds (1 minute 15 seconds)** from recording start or the last summary request, or after **five seconds of captured silence following speech**. Silence is measured from microphone samples using the same level threshold as speech segmentation, not from slow or missing STT responses. A pause triggers once, waits for pending pre-pause transcription to finish, and includes only text up to that pause; later speech belongs to the next block. Initial silence and continued silence do not send empty or duplicate requests. A new speech burst re-arms the trigger. Existing ChatGPT consent and error-pause rules still apply. The **요약** view is a single reading document with bold topic headings and explanatory Korean bullet sentences, matching the supplied reference layout. Each block can contain 1–5 topics; the model is instructed to preserve facts and avoid repetitive headings. The current speech appears beneath completed paragraphs. **스크립트** keeps the unmodified recognition text; each completed paragraph also has an expandable original-source section. Earlier blocks stay visible. Long backlogs are divided into smaller blocks; **지금 정리** creates the next block immediately, and stopping the lecture processes the remainder. Failed requests retry the same source block. Markdown export preserves every source/paraphrase pair.
+Automatic paraphrasing waits for at least **80 non-whitespace characters** of finalized text, avoiding tiny fragments and acknowledgments. It then prefers **five seconds of captured silence**, or a sentence ending after **60 seconds** of unsummarized speech. At **90 seconds**, it sends the available block even without a sentence ending. This is a punctuation/pause heuristic, not semantic topic detection. Age is measured from the first pending speech segment, so initial silence and time already summarized do not force an early request. Manual summarizing and stopping always process shorter leftovers. Silence is measured from microphone samples using the same level threshold as speech segmentation, not from slow or missing STT responses. A pause triggers once, waits for pending pre-pause transcription to finish, and includes only text up to that pause; later speech belongs to the next block. Initial silence and continued silence do not send empty or duplicate requests. A new speech burst re-arms the trigger. Existing ChatGPT consent and error-pause rules still apply. The **요약** view is a single reading document with bold topic headings and explanatory Korean bullet sentences, matching the supplied reference layout. Each block can contain 1–5 topics; the model is instructed to preserve facts and avoid repetitive headings. The current speech appears beneath completed paragraphs. **스크립트** keeps the unmodified recognition text; each completed paragraph also has an expandable original-source section. Earlier blocks stay visible. Long backlogs are divided into smaller blocks; **지금 정리** creates the next block immediately, and stopping the lecture processes the remainder. Failed requests retry the same source block. Markdown export preserves every source/paraphrase pair.
 
 Korean paraphrasing adjusts spacing, punctuation and clear disfluencies; it is AI editing, not a second audio recognition pass. Original and previously saved cleaned text stay inside expandable source details, rather than repeating the entire transcript under every heading. It cannot reliably fix misheard names or technical terms. The prompt forbids guessing unclear words, but model edits still require comparison with the original. No measured Korean recognition-accuracy improvement is claimed.
 
@@ -148,7 +230,7 @@ Korean paraphrasing adjusts spacing, punctuation and clear disfluencies; it is A
 
 The note header displays reported input, output and total tokens, plus the number of summary requests. Counts come from ChatGPT response usage fields, not a character-count estimate. Attempts are saved with their source blocks and restored with the lecture; retries add separate entries, including reported usage when a completed response is not valid summary JSON. Unreported, interrupted and legacy requests are marked **사용량 미확인** and excluded from the known total. They are not assumed to be free. This is the saved lecture's known usage, not your account-wide subscription balance or cost; **계정 사용량** opens the official usage page. A browser crash before autosave can also leave an attempt's usage unknown.
 
-The 75-second/five-second-silence schedule affects paraphrasing only; STT finalization still uses its shorter pause window. Draft work is skipped when final transcription needs to catch up. Manual **지금 정리** and ending the lecture can flush a shorter remainder. Very large blocks retain the 6,400-character input bound and are split into additional requests.
+The adaptive paraphrasing schedule affects notes only; STT finalization still uses its shorter pause window. Draft work is skipped when final transcription needs to catch up. Manual **지금 정리** and ending the lecture can flush a shorter remainder. Very large blocks retain the 6,400-character input bound and are split into additional requests.
 
 ### ChatGPT subscription sign-in (no Ollama)
 
